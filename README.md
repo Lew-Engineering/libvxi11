@@ -66,9 +66,9 @@ USAGE
      optionally call the close() member function to close the connection.
   
 
-Example
+EXAMPLE
 -------
-
+```
 #include "libvxi11.h"
 #include <stdio.h>
 
@@ -95,3 +95,4 @@ int main ()
   printf ("ID string = %s\n", s_msg);
   vxi11_ps.local ();                // Return instrument to front-panel control
 }
+```
