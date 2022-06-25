@@ -2,9 +2,7 @@
 
 MacOS library for communicating with devices via VXI-11 protocol over TCP/IP
 
-Eddie Lew
-Lew Engineering
-6/23/2022
+Eddie Lew, Lew Engineering, 6/23/2022
 
 INTRODUCTION
 ------------
@@ -28,7 +26,7 @@ by the VXIbus Consortium, Inc.:
 COMPILING
 ---------
 
-The library can be compiled from the command line on any Apple MocOS computer
+The library can be compiled from the command line on any Apple MacOS computer
 with the Apple Xcode development tools installed.  Simply place all files
 of this project in a single directory and execute the following command:
 
