@@ -1,6 +1,6 @@
 # libvxi11
 
-MacOS library for communicating with devices via VXI-11 protocol over TCP/IP
+MacOS C++ library for communicating with devices via the VXI-11 TCP/IP protocol
 
 Eddie Lew, Lew Engineering, 6/23/2022
 
@@ -8,7 +8,7 @@ INTRODUCTION
 ------------
 
 This C++ library for Apple MacOS is used by applications to communicate with
-devices supporting the VXI-11 protocol over TCP/IP.
+devices supporting the VXI-11 TCP/IP protocol.
 
 This includes various test and measurement equipment that have an Ethernet
 port and labeled as LXI compliant.  This library can also talk to LAN / GPIB
@@ -19,7 +19,7 @@ local Ethernet network.
 The RPC protocol for VXI-11 is taken from the following document authored
 by the VXIbus Consortium, Inc.:
 
-   VMEBus Extensions for Instrumentation TCP/IP Instrument Protocol
+>   VMEBus Extensions for Instrumentation TCP/IP Instrument Protocol
    Specification VXI-11, Revision 1.0, July 17, 1995
 
 
@@ -30,7 +30,7 @@ The library can be compiled from the command line on any Apple MacOS computer
 with the Apple Xcode development tools installed.  Simply place all files
 of this project in a single directory and execute the following command:
 
-  make all
+> `make all`
 
 This will create libvxi11.so.1, which should be linked to your application.
 The libvxi11.h file is the library's C++ header file.
@@ -47,8 +47,9 @@ USAGE
   Typical usage is as follows:
 
   1. Instantiate the Vxi11 class.
-     The constructor parameter indicates the hostname of the device to talk to.
-     Create a separate object for each instrument you are talking to.
+     The constructor parameter indicates the hostname or IP address of the
+     device to talk to.  Create a separate object for each instrument you are
+     talking to.
 
   2. Reset the instrument with the clear() member function.
   
@@ -74,7 +75,7 @@ int main ()
 {
   char s_msg[1000];
 
-  // Example for an instrument with built in Ethernet port
+  // Example for an instrument with a built-in Ethernet port
   Vxi11 vxi11_dmm ("dmm6500");      // "dmm6500" is the instrument hostname
   vxi11_dmm.clear ();               // Reset the instrument
   vxi11_dmm.printf ("*idn?");       // Send ID query
@@ -92,5 +93,7 @@ int main ()
   vxi11_ps.read (s_msg, 1000);
   printf ("ID string = %s\n", s_msg);
   vxi11_ps.local ();                // Return instrument to front-panel control
+
+  return (0);
 }
 ```
