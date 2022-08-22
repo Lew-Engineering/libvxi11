@@ -6,9 +6,13 @@
 //              VXI-11 protocol for instrument communication via TCP/IP
 //
 // Written by Eddie Lew, Lew Engineering
+// Copyright (C) 2020 Eddie Lew
 //
 // Edit history:
 //
+// 08-21-22 - Added error description to error messages.
+//            Added docmd_*() functions for low level control of
+//              GPIB/LAN gateways.
 // 05-18-20 - Started file.
 // ***************************************************************************
 
@@ -33,7 +37,13 @@ class Vxi11 {
                                         // Use macro _p_client for access
   void *__p_link;                       // VXI-11 link, type Create_LinkResp*
                                         // Use macro _p_link for access
+
+  enum {CNT_ERR_DESC_MAX=24};           // Description of RPC call error codes
+  static const char *_as_err_desc[CNT_ERR_DESC_MAX];
+  
  public:
+  // NOTE: See function header comments in vxi11.cpp for full documentation
+  
   // Default constructor
   Vxi11 (void);
 
@@ -50,9 +60,11 @@ class Vxi11 {
   int open (const char *s_address, const char *s_device);
 
   // Close connection to device (if destructor is not used)
+  // VXI-11 RPC is "destroy_link"
   int close (void);
 
   // Set/get timeout time in seconds
+  // Default timeout is 10 seconds
   void timeout (double d_timeout);
   double timeout (void);
 
@@ -102,9 +114,33 @@ class Vxi11 {
   // VXI-11 RPC is "device_unlock"
   int unlock (void);
 
-  // Send raw GPIB command codes
-  // VXI-11 RPC is "device_docmd"
-  int docmd (long cmd, const char *s_data);
+  // Send raw GPIB command codes via GPIB/LAN gateway
+  // VXI-11 RPC is "device_docmd" with command 0x20000 "Send command"
+  int docmd_send_command (const char *s_data);
+
+  // Get GPIB bus status via GPIB/LAN gateway
+  // VXI-11 RPC is "device_docmd" with command 0x20001 "Bus status"
+  int docmd_bus_status (int type);
+
+  // Set GPIB ATN line state via GPIB/LAN gateway
+  // VXI-11 RPC is "device_docmd" with command 0x20002 "ATN control"
+  int docmd_atn_control (bool b_state);
+
+  // Set GPIB REN line state via GPIB/LAN gateway
+  // VXI-11 RPC is "device_docmd" with command 0x20003 "REN control"
+  int docmd_ren_control (bool b_state);
+
+  // Pass control to another GPIB controller via GPIB/LAN gateway
+  // VXI-11 RPC is "device_docmd" with command 0x20004 "Pass control"
+  int docmd_pass_control (int addr);
+
+  // Set GPIB address of the GPIB/LAN gateway
+  // VXI-11 RPC is "device_docmd" with command 0x2000A "Bus address"
+  int docmd_bus_address (int addr);
+
+  // Toggle GPIB IFC line state via GPIB/LAN gateway
+  // VXI-11 RPC is "device_docmd" with command 0x20010 "IFC control"
+  int docmd_ifc_control (void);
 };
 
 #endif

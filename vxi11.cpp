@@ -5,9 +5,13 @@
 //             over TCP/IP.
 //
 // Written by Eddie Lew, Lew Engineering
+// Copyright (C) 2020 Eddie Lew
 //
 // Edit history:
 //
+// 08-21-22 - Added error description to error messages.
+//            Added docmd_*() functions for low level control of
+//              GPIB/LAN gateways.
 // 11-27-21 - read(): Add number of bytes read in error message when END
 //              indicator is not found.
 // 06-10-20 - First releaesd version.
@@ -28,6 +32,34 @@
 #define _p_client ((CLIENT *)__p_client)
 #define _p_link ((Create_LinkResp *)__p_link)
 
+// Error description for each error code from the VXI-11 RPC calls
+const char *Vxi11::_as_err_desc[Vxi11::CNT_ERR_DESC_MAX] =
+  {"",                                  // 0 (no error)
+   "",                                  // 1
+   "",                                  // 2
+   "",                                  // 3
+   "invalid link identifier",           // 4
+   "parameter error",                   // 5
+   "",                                  // 6
+   "",                                  // 7
+   "operation not supported",           // 8
+   "",                                  // 9
+   "",                                  // 10
+   "device locked by another link",     // 11
+   "no lock held by this link",         // 12
+   "",                                  // 13
+   "",                                  // 14
+   "I/O timeout",                       // 15
+   "",                                  // 16
+   "I/O error",                         // 17
+   "",                                  // 18
+   "",                                  // 19
+   "",                                  // 20
+   "",                                  // 21
+   "",                                  // 22
+   "abort",                             // 23   
+  };
+                                      
 // ***************************************************************************
 // Vxi11 default constructor - Do not connect to device yet
 //
@@ -53,12 +85,19 @@ Vxi11 (void)
 // Parameters:
 // 1. s_address   - Device network address, either a host name or IP
 //                  address in dot notation
+//
 // 2. s_device    - Device name at s_address
+//
 //                  May be set to null pointer if device is directly
-//                  connected to the network.
-//                  For GPIB/LAN gateways, this is usually "gpib0,n",
-//                  where 'n' is the GPIB address number.  If connecting
-//                  to the gateway itself, this is usually "gpib0".
+//                  connected to the network (an Ethernet or Wifi device).
+//
+//                  For GPIB devices connected to a GPIB/LAN gateways, this is
+//                  usually "gpib0,n", where 'n' is the GPIB address number of
+//                  the GPIB device.
+//
+//                  For GPIB interfaces (the GPIB/LAN gateway itself), this is
+//                  usually "gpib0".
+//
 // 3. p_err       - Returns error code if given non-zero pointer
 //                  Stores to pointer locaion 0 = no error
 //                                            1 = error
@@ -111,7 +150,8 @@ Vxi11 (const char *s_address, const char *s_device, int *p_err)
 // Notes: If there was an error in the RPC call, that error message will
 //        be printed to stderr.
 //
-//        Use this function if the default construtor was used.
+//        Use this function if the default construtor was used, or if
+//        re-opening the device after closing it.
 // ***************************************************************************
   int Vxi11::
 open (const char *s_address, const char *s_device)
@@ -182,6 +222,7 @@ open (const char *s_address, const char *s_device)
 
 // ***************************************************************************
 // Vxi11::close - Close connection to the device
+//                VXI-11 RPC is "destroy_link"
 //
 // Parameters: None
 //
@@ -202,10 +243,19 @@ close (void)
     fprintf (stderr, "Vxi11 close error: no RPC response\n");
     err = 1;
     }
-  else if (p_error->error) {
-    fprintf (stderr, "Vxi11 close error: destroy_link error %d\n",
-             int(p_error->error));
-    err = 1;
+  
+  // Possible errors
+  //  0 = no error
+  //  4 = invalid link identifier
+  else {
+    int err_code = int (p_error->error);
+    if (err_code) {
+      int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
+                         err_code : 0;
+      fprintf (stderr, "Vxi11 close error: destroy_link error %d %s\n",
+               err_code, _as_err_desc[idx_err_desc]);
+      err = 1;
+      }
     }
   
   free (_p_link);
@@ -225,6 +275,8 @@ close (void)
 // 1. d_timeout - Timeout time, in seconds, for subsequent VXI-11 operations
 //
 // Returns: None
+//
+// Notes: Default timeout if this function is not called is 10 seconds.
 // ***************************************************************************
   void Vxi11::
 timeout (double d_timeout)
@@ -259,6 +311,10 @@ timeout (void)
 //
 // Returns: 0 = no error
 //          1 = error
+//
+// Notes: If Vxi11 object is associated with a GPIB device or GPIB interface
+//        via a GPIB/LAN gateway, GPIB uses SEND command sequence, with EOI
+//        on last byte.
 // ***************************************************************************
   int Vxi11::
 write (const char *ac_data, int cnt_data)
@@ -314,8 +370,12 @@ write (const char *ac_data, int cnt_data)
     // 15 = I/O timeout
     // 17 = I/O error
     // 23 = abort
-    if (p_writeResp->error) {
-      fprintf (stderr, "Vxi11 write error: %d\n", (int)p_writeResp->error);
+    int err_code = int (p_writeResp->error);
+    if (err_code) {
+      int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
+                         err_code : 0;
+      fprintf (stderr, "Vxi11 write error: %d %s\n",
+               err_code, _as_err_desc[idx_err_desc]);
       return (1);
       }
     
@@ -335,6 +395,10 @@ write (const char *ac_data, int cnt_data)
 //
 // Returns: 0 = no error
 //          1 = error
+//
+// Notes: If Vxi11 object is associated with a GPIB device or GPIB interface
+//        via a GPIB/LAN gateway, GPIB uses SEND command sequence, with EOI
+//        on last byte.
 // ***************************************************************************
   int Vxi11::
 printf (const char *s_format, ...)
@@ -376,6 +440,9 @@ printf (const char *s_format, ...)
 //
 // Returns: 0 = no error
 //          1 = error
+//
+// Notes: If Vxi11 object is associated with a GPIB device or GPIB interface
+//        via a GPIB/LAN gateway, GPIB uses RECEIVE command sequence
 // ***************************************************************************
   int Vxi11::
 read (char *ac_data, int cnt_data_max, int *pcnt_read)
@@ -442,8 +509,12 @@ read (char *ac_data, int cnt_data_max, int *pcnt_read)
     // 15 = I/O timeout
     // 17 = I/O error
     // 23 = abort
-    if (p_readResp->error) {
-      fprintf (stderr, "Vxi11 read error: %d\n", (int)p_readResp->error);
+    int err_code = int (p_readResp->error);
+    if (err_code) {
+      int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
+                         err_code : 0;
+      fprintf (stderr, "Vxi11 read error: %d %s\n",
+               err_code, _as_err_desc[idx_err_desc]);
       return (1);
       }
 
@@ -566,6 +637,15 @@ query (const char *s_query, char *s_val, int len_val_max)
 //
 // Returns: 8-bit status byte if no error
 //          -1 if error
+//
+// Notes: If Vxi11 object is associated with a GPIB device (a GPIB instrument
+//        connected to a GPIB/LAN gateway), the READ STATUS BYTE control
+//        sequence is executed for the addressed device, with GPIB commands
+//        SPE (serial poll enable, ATN code 24) and SPD (serial poll disable,
+//        ATN code 25) (see notes)
+//        
+//        If Vxi11 object is associated with a GPIB interface (the GPIB/LAN
+//        gateway itself), this function will return an error.
 // ***************************************************************************
   int Vxi11::
 readstb (void)
@@ -592,8 +672,12 @@ readstb (void)
   // 15 = I/O timeout
   // 17 = I/O error
   // 23 = abort
-  if (p_readStbResp->error) {           // Check error
-    printf("Vxi11 readstb error: %d\n", (int)p_readStbResp->error);
+  int err_code = int (p_readStbResp->error);
+  if (err_code) {
+    int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
+                       err_code : 0;
+    fprintf (stderr, "Vxi11 readstb error: %d %s\n",
+             err_code, _as_err_desc[idx_err_desc]);
     return (-1);
     }
 
@@ -602,13 +686,23 @@ readstb (void)
 }
 
 // ***************************************************************************
-// Vxi11::trigger - Send group execute trigger (GET)
+// Vxi11::trigger - Send group execute trigger
 //                  VXI-11 RPC is "device_trigger"
 //
 // Parameters: None
 //
 // Returns: 0 = no error
 //          1 = error
+//
+// Notes: If Vxi11 object is associated with a GPIB device (a GPIB instrument
+//        connected to a GPIB/LAN gateway), only that device will receive the
+//        GPIB command GET (group execute trigger, ATN code 8).
+//
+//        If Vxi11 object is associated with a GPIB interface (the GPIB/LAN
+//        gateway itself), then all addressed devices will receive the
+//        GPIB command GET (group execute trigger, ATN code 8).
+//        Use the doccmd_send_command() function to send the raw GPIB commands
+//        to address the set of devices prior to calling trigger().
 // ***************************************************************************
   int Vxi11::
 trigger (void)
@@ -635,8 +729,12 @@ trigger (void)
   // 15 = I/O timeout
   // 17 = I/O error
   // 23 = abort
-  if (p_error->error != 0) {            // Check error
-    fprintf (stderr, "Vxi11 trigger error: %d\n", (int)p_error->error);
+  int err_code = int (p_error->error);
+  if (err_code) {
+    int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
+                       err_code : 0;
+    fprintf (stderr, "Vxi11 trigger error: %d %s\n",
+             err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }
 
@@ -651,6 +749,14 @@ trigger (void)
 //
 // Returns: 0 = no error
 //          1 = error
+//
+// Notes: If Vxi11 object is associted with a GPIB device (a GPIB instrument
+//        connected to a GPIB/LAN gateway) the GPIB command is SDC (selective
+//        device clear, ATN code 4), and resets only that device
+//
+//        If Vxi11 object is associated with a GPIB interface (a GPIB/LAN
+//        gateway itself), GPIB command is DCL (device clear, ATN code 20),
+//        and resets all devices
 // ***************************************************************************
   int Vxi11::
 clear (void)
@@ -677,8 +783,12 @@ clear (void)
   // 15 = I/O timeout
   // 17 = I/O error
   // 23 = abort
-  if (p_error->error != 0) {            // Check error
-    fprintf (stderr, "Vxi11 clear error: %d\n", (int)p_error->error);
+  int err_code = int (p_error->error);
+  if (err_code) {
+    int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
+                       err_code : 0;
+    fprintf (stderr, "Vxi11 clear error: %d %s\n",
+             err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }
 
@@ -686,13 +796,22 @@ clear (void)
 }
 
 // ***************************************************************************
-// Vxi11::remote - Place device in remote state
+// Vxi11::remote - Place device in remote state, with local lockout
 //                 VXI-11 RPC is "device_remote"
+//                 
 //
 // Parameters: None
 //
 // Returns: 0 = no error
 //          1 = error
+//
+// Notes: If Vxi11 object is associated with a GPIB device (a GPIB instrument
+//        connected to a GPIB/LAN gateway), the SET RWLS control sequence is
+//        excuted for the addressed device with GPIB command LLO (local
+//        lockout, ATN code 17)
+//
+//        If Vxi11 object is associated with a GPIB interface (the GPIB/LAN
+//        gateway itself), this function will return an error.
 // ***************************************************************************
   int Vxi11::
 remote (void)
@@ -719,8 +838,12 @@ remote (void)
   // 15 = I/O timeout
   // 17 = I/O error
   // 23 = abort
-  if (p_error->error != 0) {            // Check error
-    fprintf (stderr, "Vxi11 remote error: %d\n", (int)p_error->error);
+  int err_code = int (p_error->error);
+  if (err_code) {
+    int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
+                       err_code : 0;
+    fprintf (stderr, "Vxi11 remote error: %d %s\n",
+             err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }
 
@@ -735,6 +858,16 @@ remote (void)
 //
 // Returns: 0 = no error
 //          1 = error
+//
+// Notes: If Vxi11 object is associated with a GPIB device (a GPIB instrument
+//        connected to a GPIB/LAN gateway), the SET RWLS control sequence is
+//        excuted for the addressed device, with GPIB command GTL (go to local,
+//        ATN code 1).
+//
+//        If Vxi11 object is associated with a GPIB interface (the GPIB/LAN
+//        gateway itself), this functon may return an error if the operation
+//        is not supported, or it may deactivate the REN line, depending on
+//        the GPIB/LAN interface capabillity.
 // ***************************************************************************
   int Vxi11::
 local (void)
@@ -761,8 +894,12 @@ local (void)
   // 15 = I/O timeout
   // 17 = I/O error
   // 23 = abort
-  if (p_error->error != 0) {            // Check error
-    fprintf (stderr, "Vxi11 local error: %d\n", (int)p_error->error);
+  int err_code = int (p_error->error);
+  if (err_code) {
+    int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
+                       err_code : 0;
+    fprintf (stderr, "Vxi11 local error: %d %s\n",
+             err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }
 
@@ -799,8 +936,12 @@ lock (void)
   //  4 = invalid link identifier
   // 11 = device locked by another link
   // 23 = abort
-  if (p_error->error != 0) {            // Check error
-    fprintf (stderr, "Vxi11 lock error: %d\n", (int)p_error->error);
+  int err_code = int (p_error->error);
+  if (err_code) {
+    int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
+                       err_code : 0;
+    fprintf (stderr, "Vxi11 lock error: %d %s\n",
+             err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }
 
@@ -831,8 +972,12 @@ unlock (void)
   //  0 = no error
   //  4 = invalid link identifier
   // 12 = no lock held by this link
-  if (p_error->error != 0) {            // Check error
-    fprintf (stderr, "Vxi11 unlock error: %d\n", (int)p_error->error);
+  int err_code = int (p_error->error);
+  if (err_code) {
+    int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
+                       err_code : 0;
+    fprintf (stderr, "Vxi11 unlock error: %d %s\n",
+             err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }
 
@@ -840,25 +985,45 @@ unlock (void)
 }
 
 // ***************************************************************************
-// Vxi11::docmd - Send raw low-level GPIB commands
-//                VXI-11 RPC is "device_docmd"
+// The following docmd_* functions implement low level GPIB communication
+// with a GPIB interface (GPIB/LAN gateway itself) defined in the following
+// document:
+//
+//   VMEbus Extensions for Instrumentation
+//   TCP/IP-IEEE 488.1 Interface Specification VXI-11.2
+//   Draft 0.3  July 17, 1995
+//   Section B.5. Interface Communication
+//
+// ***************************************************************************
+
+// ***************************************************************************
+// Vxi11::docmd_send_command - Send raw low-level GPIB commands
+//                             VXI-11 RPC is "device_docmd" with cmd 0x20000
 //
 // Parameters:
-// 1. cmd    - Command code
-// 2. s_data - Command data
+// 1. s_data - GPIB control command data to send, null terminated
+//             This will be sent with the ATN line enabled
 //
 // Returns: 0 = no error
 //          1 = error
+//
+// Notes: This command should be used with a Vxi11 object assoicated with the
+//        GPIB interface itself (such as a GPIB/LAN gateway), not a GPIB
+//        instrument.
+//
+//        For example, the string "?U#$" will first unlisten all, then talk
+//        to GPIB address 21 (the device address of the GPIB/LAN gateway
+//        interface), then enable listening on addresses 3 and 4.
 // ***************************************************************************
   int Vxi11::
-docmd (long cmd, const char *s_data)
+docmd_send_command (const char *s_data)
 {
   Device_DocmdParms docmdParms;         // To send to device_docmd RPC
   docmdParms.lid = _p_link->lid;        // Link ID from create_link RPC call
   docmdParms.flags = 0;                 // No flags
   docmdParms.io_timeout = _timeout_ms;  // Timeout for I/O in ms
   docmdParms.lock_timeout= _timeout_ms; // Timeout for lock in ms
-  docmdParms.cmd = cmd;                 // Command code
+  docmdParms.cmd = 0x20000;             // Command code
   docmdParms.network_order = 0;         // Little-endian
   docmdParms.datasize = 1;              // 1 byte size
   docmdParms.data_in.data_in_len = strlen (s_data); // Command data size
@@ -868,20 +1033,418 @@ docmd (long cmd, const char *s_data)
   Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
   
   if (p_docmdResp == 0) {
-    fprintf (stderr, "Vxi11 docmd error: no RPC response\n");
+    fprintf (stderr, "Vxi11 docmd_send_command error: no RPC response\n");
     return (1);
     }
   
   // Possible errors
   //  0 = no error
   //  4 = invalid link identifier
+  //  5 = parameter error
   //  8 = operation not supported
   // 11 = device locked by another link
   // 15 = I/O timeout
   // 17 = I/O error
   // 23 = abort
-  if (p_docmdResp->error != 0) {        // Check error
-    printf("Vxi11 docmd error: %d\n", (int)p_docmdResp->error);
+  int err_code = int (p_docmdResp->error);
+  if (err_code) {
+    int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
+                       err_code : 0;
+    fprintf (stderr, "Vxi11 docmd_send_command error: %d %s\n",
+             err_code, _as_err_desc[idx_err_desc]);
+    return (1);
+    }
+
+  return (0);
+}
+
+// ***************************************************************************
+// Vxi11::docmd_bus_status - Get GPIB bus status
+//                           VXI-11 RPC is "device_docmd" with command 0x20001
+//
+// Parameters:
+// 1. type - Selects the GPIB status to query
+//           1 = REN line state, returns 1 if REN is true, 0 otherwise
+//
+//           2 = SRQ line state, returns 1 if SRQ is true, 0 otherwise
+//
+//           3 = NDAC line state, returns 1 if NDAC is true, 0 otherwise
+//
+//           4 = System controller state, returns 1 if active, 0 otherwise
+//               In a multi-controller setup, only one controller can be the
+//               system controller.  This will return 1 for a single-controller
+//               setup.
+//
+//           5 = Controller-in-charge state, returns 1 if active, 0 otherwise
+//               In a multi-controller setup, this indicates which controller
+//               is the controller in charge.  This will return 1 for a
+//               single-controller setup.
+//
+//           6 = Talker state, returns 1 if interface addressed to talk,
+//               0 otherwise
+//
+//           7 = Listener state, returns 1 if interface addressed to listen,
+//               0 otherwise
+//
+//           8 = Bus address, returns interface address (0 to 30)
+//               For example, the default value for the Agilent E5810A is 21.
+//
+// Returns: -1 = error
+//          otherwise, see above based on type
+//
+// Notes: This command should be used with a Vxi11 object assoicated with the
+//        GPIB interface itself (such as a GPIB/LAN gateway), not a GPIB
+//        instrument.
+// ***************************************************************************
+  int Vxi11::
+docmd_bus_status (int type)
+{
+  Device_DocmdParms docmdParms;         // To send to device_docmd RPC
+  docmdParms.lid = _p_link->lid;        // Link ID from create_link RPC call
+  docmdParms.flags = 0;                 // No flags
+  docmdParms.io_timeout = _timeout_ms;  // Timeout for I/O in ms
+  docmdParms.lock_timeout= _timeout_ms; // Timeout for lock in ms
+  docmdParms.cmd = 0x20001;             // Command code
+  docmdParms.network_order = 0;         // Little-endian
+  docmdParms.datasize = 2;              // 2 byte size
+  docmdParms.data_in.data_in_len = 2;   // Status type size
+  docmdParms.data_in.data_in_val = (char *)(&type);  // Status type
+
+  // Send request for bus status
+  Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
+  
+  if (p_docmdResp == 0) {
+    fprintf (stderr, "Vxi11 docmd_bus_status error: no RPC response\n");
+    return (-1);
+    }
+  
+  // Possible errors
+  //  0 = no error
+  //  4 = invalid link identifier
+  //  5 = parameter error
+  //  8 = operation not supported
+  // 11 = device locked by another link
+  // 15 = I/O timeout
+  // 17 = I/O error
+  // 23 = abort
+  int err_code = int (p_docmdResp->error);
+  if (err_code) {
+    int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
+                       err_code : 0;
+    fprintf (stderr, "Vxi11 docmd_bus_status error: %d %s\n",
+             err_code, _as_err_desc[idx_err_desc]);
+    return (-1);
+    }
+
+  // Get status value to return
+  int status = *(short *)p_docmdResp->data_out.data_out_val;
+  
+  return (status);
+}
+
+// ***************************************************************************
+// Vxi11::docmd_atn_control - Set GPIB ATN (attention, command mode) line state
+//                            VXI-11 RPC is "device_docmd" with cmd 0x20002
+//
+// Parameters:
+// 1. b_state - Sets GPIB ATN line state
+//              true  = set ATN active (line driven low)
+//              false = set ATN inactive (line driven high)
+//
+// Returns: 0 = no error
+//          1 = error
+//
+// Notes: This command should be used with a Vxi11 object assoicated with the
+//        GPIB interface itself (such as a GPIB/LAN gateway), not a GPIB
+//        instrument.
+// ***************************************************************************
+  int Vxi11::
+docmd_atn_control (bool b_state)
+{
+  // Convert boolean state to 2-byte value needed by the RPC call
+  unsigned short us_state = (b_state) ? 1 : 0;
+  
+  Device_DocmdParms docmdParms;         // To send to device_docmd RPC
+  docmdParms.lid = _p_link->lid;        // Link ID from create_link RPC call
+  docmdParms.flags = 0;                 // No flags
+  docmdParms.io_timeout = _timeout_ms;  // Timeout for I/O in ms
+  docmdParms.lock_timeout= _timeout_ms; // Timeout for lock in ms
+  docmdParms.cmd = 0x20002;             // Command code
+  docmdParms.network_order = 0;         // Little-endian
+  docmdParms.datasize = 2;              // 2 byte size
+  docmdParms.data_in.data_in_len = 2;   // Command data size
+  docmdParms.data_in.data_in_val = (char *)&us_state;  // Command data
+
+  // Set ATN line state
+  Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
+  
+  if (p_docmdResp == 0) {
+    fprintf (stderr, "Vxi11 docmd_atn_control error: no RPC response\n");
+    return (1);
+    }
+  
+  // Possible errors
+  //  0 = no error
+  //  4 = invalid link identifier
+  //  5 = parameter error
+  //  8 = operation not supported
+  // 11 = device locked by another link
+  // 15 = I/O timeout
+  // 17 = I/O error
+  // 23 = abort
+  int err_code = int (p_docmdResp->error);
+  if (err_code) {
+    int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
+                       err_code : 0;
+    fprintf (stderr, "Vxi11 docmd_atn_control error: %d %s\n",
+             err_code, _as_err_desc[idx_err_desc]);
+    return (1);
+    }
+
+  return (0);
+}
+
+// ***************************************************************************
+// Vxi11::docmd_ren_control - Set GPIB REN (remote enable) line state
+//                            VXI-11 RPC is "device_docmd" with cmd 0x20003
+//
+// Parameters:
+// 1. b_state - Sets GPIB REN line state
+//              true  = set REN active (line driven low)
+//              false = set REN inactive (line driven high)
+//
+// Returns: 0 = no error
+//          1 = error
+//
+// Notes: This command should be used with a Vxi11 object assoicated with the
+//        GPIB interface itself (such as a GPIB/LAN gateway), not a GPIB
+//        instrument.
+//
+//        In a multi-controller setup, only the system controller can set
+//        this state.
+// ***************************************************************************
+  int Vxi11::
+docmd_ren_control (bool b_state)
+{
+  // Convert boolean state to 2-byte value needed by the RPC call
+  unsigned short us_state = (b_state) ? 1 : 0;
+  
+  Device_DocmdParms docmdParms;         // To send to device_docmd RPC
+  docmdParms.lid = _p_link->lid;        // Link ID from create_link RPC call
+  docmdParms.flags = 0;                 // No flags
+  docmdParms.io_timeout = _timeout_ms;  // Timeout for I/O in ms
+  docmdParms.lock_timeout= _timeout_ms; // Timeout for lock in ms
+  docmdParms.cmd = 0x20003;             // Command code
+  docmdParms.network_order = 0;         // Little-endian
+  docmdParms.datasize = 2;              // 2 byte size
+  docmdParms.data_in.data_in_len = 2;   // Command data size
+  docmdParms.data_in.data_in_val = (char *)&us_state;  // Command data
+
+  // Set REN line state
+  Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
+  
+  if (p_docmdResp == 0) {
+    fprintf (stderr, "Vxi11 docmd_ren_control error: no RPC response\n");
+    return (1);
+    }
+  
+  // Possible errors
+  //  0 = no error
+  //  4 = invalid link identifier
+  //  5 = parameter error
+  //  8 = operation not supported
+  // 11 = device locked by another link
+  // 15 = I/O timeout
+  // 17 = I/O error
+  // 23 = abort
+  int err_code = int (p_docmdResp->error);
+  if (err_code) {
+    int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
+                       err_code : 0;
+    fprintf (stderr, "Vxi11 docmd_ren_control error: %d %s\n",
+             err_code, _as_err_desc[idx_err_desc]);
+    return (1);
+    }
+
+  return (0);
+}
+
+// ***************************************************************************
+// Vxi11::docmd_pass_control - Set another GPIB controller as the controller-
+//                             in-charge
+//                             VXI-11 RPC is "device_docmd" with cmd 0x20004
+//
+// Parameters:
+// 1. addr - GPIB address of the controller to pass control to
+//
+// Returns: 0 = no error
+//          1 = error
+//
+// Notes: This command should be used with a Vxi11 object assoicated with the
+//        GPIB interface itself (such as a GPIB/LAN gateway), not a GPIB
+//        instrument.
+//
+//        GPIB command is TCT (take control, ATN code 9).
+//
+//        This function is only applicable in a multi-controller setup.
+//        This does not change which controller is the system controller.
+// ***************************************************************************
+  int Vxi11::
+docmd_pass_control (int addr)
+{
+  Device_DocmdParms docmdParms;         // To send to device_docmd RPC
+  docmdParms.lid = _p_link->lid;        // Link ID from create_link RPC call
+  docmdParms.flags = 0;                 // No flags
+  docmdParms.io_timeout = _timeout_ms;  // Timeout for I/O in ms
+  docmdParms.lock_timeout= _timeout_ms; // Timeout for lock in ms
+  docmdParms.cmd = 0x20004;             // Command code
+  docmdParms.network_order = 0;         // Little-endian
+  docmdParms.datasize = 4;              // 4 byte size
+  docmdParms.data_in.data_in_len = 4;   // Command data size
+  docmdParms.data_in.data_in_val = (char *)&addr;  // Command data
+
+  // Pass control to other GPIB controller
+  Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
+  
+  if (p_docmdResp == 0) {
+    fprintf (stderr, "Vxi11 docmd_pass_control error: no RPC response\n");
+    return (1);
+    }
+  
+  // Possible errors
+  //  0 = no error
+  //  4 = invalid link identifier
+  //  5 = parameter error
+  //  8 = operation not supported
+  // 11 = device locked by another link
+  // 15 = I/O timeout
+  // 17 = I/O error
+  // 23 = abort
+  int err_code = int (p_docmdResp->error);
+  if (err_code) {
+    int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
+                       err_code : 0;
+    fprintf (stderr, "Vxi11 docmd_pass_control error: %d %s\n",
+             err_code, _as_err_desc[idx_err_desc]);
+    return (1);
+    }
+
+  return (0);
+}
+
+// ***************************************************************************
+// Vxi11::docmd_bus_address - Set the GPIB address of the GPIB/LAN gateway
+//                            itself
+//                            VXI-11 RPC is "device_docmd" with cmd 0x2000a
+//
+// Parameters:
+// 1. addr - GPIB address to set this of the controller to pass control to
+//           (0 to 30)
+//
+// Returns: 0 = no error
+//          1 = error
+//
+// Notes: This command should be used with a Vxi11 object assoicated with the
+//        GPIB interface itself (such as a GPIB/LAN gateway), not a GPIB
+//        instrument.
+// ***************************************************************************
+  int Vxi11::
+docmd_bus_address (int addr)
+{
+  Device_DocmdParms docmdParms;         // To send to device_docmd RPC
+  docmdParms.lid = _p_link->lid;        // Link ID from create_link RPC call
+  docmdParms.flags = 0;                 // No flags
+  docmdParms.io_timeout = _timeout_ms;  // Timeout for I/O in ms
+  docmdParms.lock_timeout= _timeout_ms; // Timeout for lock in ms
+  docmdParms.cmd = 0x2000a;             // Command code
+  docmdParms.network_order = 0;         // Little-endian
+  docmdParms.datasize = 4;              // 4 byte size
+  docmdParms.data_in.data_in_len = 4;   // Command data size
+  docmdParms.data_in.data_in_val = (char *)&addr;  // Command data
+
+  // Set GPIB address of GPIB/LAN gateway
+  Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
+  
+  if (p_docmdResp == 0) {
+    fprintf (stderr, "Vxi11 docmd_bus_address error: no RPC response\n");
+    return (1);
+    }
+  
+  // Possible errors
+  //  0 = no error
+  //  4 = invalid link identifier
+  //  5 = parameter error
+  //  8 = operation not supported
+  // 11 = device locked by another link
+  // 15 = I/O timeout
+  // 17 = I/O error
+  // 23 = abort
+  int err_code = int (p_docmdResp->error);
+  if (err_code) {
+    int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
+                       err_code : 0;
+    fprintf (stderr, "Vxi11 docmd_bus_address error: %d %s\n",
+             err_code, _as_err_desc[idx_err_desc]);
+    return (1);
+    }
+
+  return (0);
+}
+
+// ***************************************************************************
+// Vxi11::docmd_ifc_control - Toggle GPIB IFC (interface clear) line state
+//                            VXI-11 RPC is "device_docmd" with cmd 0x20010
+//
+// Parameters: None
+//
+// Returns: 0 = no error
+//          1 = error
+//
+// Notes: This command should be used with a Vxi11 object assoicated with the
+//        GPIB interface itself (such as a GPIB/LAN gateway), not a GPIB
+//        instrument.
+//
+//        This will cause all GPIB devices to go to their inactive state.
+//        In a multi-controller setup, only the system controller can do this
+//        operation.
+// ***************************************************************************
+  int Vxi11::
+docmd_ifc_control (void)
+{
+  Device_DocmdParms docmdParms;         // To send to device_docmd RPC
+  docmdParms.lid = _p_link->lid;        // Link ID from create_link RPC call
+  docmdParms.flags = 0;                 // No flags
+  docmdParms.io_timeout = _timeout_ms;  // Timeout for I/O in ms
+  docmdParms.lock_timeout= _timeout_ms; // Timeout for lock in ms
+  docmdParms.cmd = 0x20010;             // Command code
+  docmdParms.network_order = 0;         // Little-endian
+  docmdParms.datasize = 0;              // 0 byte size (not used)
+  docmdParms.data_in.data_in_len = 0;   // Command data size (not used)
+  docmdParms.data_in.data_in_val = 0;;  // Command data (not used)
+
+  // Toggle IFC line state
+  Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
+  
+  if (p_docmdResp == 0) {
+    fprintf (stderr, "Vxi11 docmd_ifc_control error: no RPC response\n");
+    return (1);
+    }
+  
+  // Possible errors
+  //  0 = no error
+  //  4 = invalid link identifier
+  //  5 = parameter error
+  //  8 = operation not supported
+  // 11 = device locked by another link
+  // 15 = I/O timeout
+  // 17 = I/O error
+  // 23 = abort
+  int err_code = int (p_docmdResp->error);
+  if (err_code) {
+    int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
+                       err_code : 0;
+    fprintf (stderr, "Vxi11 docmd_ifc_control error: %d %s\n",
+             err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }
 

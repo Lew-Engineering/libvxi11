@@ -12,8 +12,8 @@ devices supporting the VXI-11 TCP/IP protocol.
 
 This includes various test and measurement equipment that have an Ethernet
 port and labeled as LXI compliant.  This library can also talk to LAN / GPIB
-gateways such as the Agilent or Keysight E5810, allowing instruments with a
-GPIB (also known as HP-IB and IEEE-488) interface to be accessible on a
+gateways such as the Agilent E5810A or Keysight E5810B, allowing instruments
+with a GPIB (also known as HP-IB and IEEE-488) interface to be accessible on a
 local Ethernet network.
 
 The RPC protocol for VXI-11 is taken from the following document authored
@@ -22,13 +22,15 @@ by the VXIbus Consortium, Inc.:
 >   VMEBus Extensions for Instrumentation TCP/IP Instrument Protocol
    Specification VXI-11, Revision 1.0, July 17, 1995
 
+The specification is included here in the VXI-11_Specification directory.
+
 
 COMPILING
 ---------
 
-The library can be compiled from the command line on any Apple MacOS computer
-with the Apple Xcode development tools installed.  Simply place all files
-of this project in a single directory and execute the following command:
+The library can be compiled from the command line on any Apple Macintosh
+computer with the Apple Xcode development tools installed.  Simply place all
+files of this project in a single directory and execute the following command:
 
 > `make all`
 
