@@ -9,6 +9,8 @@
 //
 // Edit history:
 //
+// 08-22-22 - read(): Use read termination method specified by
+//              read_terminator().  Defualt is END (EOI for GPIB).
 // 08-21-22 - Added error description to error messages.
 //            Added docmd_*() functions for low level control of
 //              GPIB/LAN gateways.
@@ -113,6 +115,8 @@ Vxi11 (const char *s_address, const char *s_device, int *p_err)
   __p_link = 0;                         // No link to device yet
 
   timeout (10.0);                       // Default timeout
+  read_terminator (-1);                 // Terminate read with END (EOI line
+                                        // for GPIB)
 
   int err = open (s_address, s_device); // Connect to device
 
@@ -465,9 +469,16 @@ read (char *ac_data, int cnt_data_max, int *pcnt_read)
   readParms.requestSize = cnt_data_max; // Maximum # of bytes to read
   readParms.io_timeout = _timeout_ms;	// Timeout for I/O in ms
   readParms.lock_timeout = _timeout_ms;	// Timeout for lock in ms
-  readParms.flags = 0;                  // No special flags
-  readParms.termChar = 0;               // Termination character not used,
+
+  if (_c_read_terminator == -1) {       // No term character, use END (EOI)
+    readParms.flags = 0;                // No special flags
+    readParms.termChar = 0;             // Termination character not used,
                                         // since flags = 0
+    }
+  else {
+    readParms.flags = 128;              // Use termination character
+    readParms.termChar = _c_read_terminator;
+    }
   
   // Iterate reads, since internal buffer in device_read RPC call may be less
   // than the maximum number of bytes requested
@@ -518,8 +529,9 @@ read (char *ac_data, int cnt_data_max, int *pcnt_read)
       return (1);
       }
 
-    // If "END" indicator is read, then done reading from device
-    if (p_readResp->reason & 4)
+    // If "END" indicator or termination characer is read, then done reading
+    // from device
+    if (p_readResp->reason & 6)         // bit 2 = END (EOI), bit 1 = term char
       break;
 
     // If user buffer is full, return with error

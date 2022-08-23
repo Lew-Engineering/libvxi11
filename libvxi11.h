@@ -10,6 +10,9 @@
 //
 // Edit history:
 //
+// 08-22-22 - Added read_terminator() functions to set and get the terminator
+//              used when reading data from the device.  Default is END (EOI
+//              for GPIB).
 // 08-21-22 - Added error description to error messages.
 //            Added docmd_*() functions for low level control of
 //              GPIB/LAN gateways.
@@ -32,6 +35,9 @@ class Vxi11 {
 
   double _d_timeout;                    // Timeout time, in seconds
   int _timeout_ms;                      // Timeout time, in milliseconds
+
+  char _c_read_terminator;              // Read termination character
+                                        // -1 = END (use EOI for GPIB))
   
   void *__p_client;                     // RPC client, type CLIENT*
                                         // Use macro _p_client for access
@@ -68,6 +74,12 @@ class Vxi11 {
   void timeout (double d_timeout);
   double timeout (void);
 
+  // Set/get the read termination method
+  // -1 = END (EOI line for GPIB); this is the default
+  // Some devices use 10 (linefeed) or 0 (null)
+  void read_terminator (char c_term) { _c_read_terminator = c_term; }
+  char read_terminator (void) { return (_c_read_terminator); }
+  
   // Write data to device
   // VXI-11 RPC is "device_write"
   int write (const char *ac_data, int cnt_data);
