@@ -16,6 +16,13 @@ gateways such as the Agilent E5810A or Keysight E5810B, allowing instruments
 with a GPIB (also known as HP-IB and IEEE-488) interface to be accessible on a
 local Ethernet network.
 
+In fact, using an E5810A/B with this library is one of the easiest ways of
+talking to GPIB instruments on a Mac.  No drivers are needed; simply link this
+library to your program.  Also, since the E5810A/B is on your network, multiple
+Macs can connect to multiple GPIB devices at the same time.  And unlike USB
+GPIB interfaces, you are not tethered by a USB cable.  You can control your
+GPIB instruments from any Mac anywhere in your lab.
+
 The RPC protocol for VXI-11 is taken from the following document authored
 by the VXIbus Consortium, Inc.:
 
@@ -78,23 +85,27 @@ int main ()
   char s_msg[1000];
 
   // Example for an instrument with a built-in Ethernet port
-  Vxi11 vxi11_dmm ("dmm6500");      // "dmm6500" is the instrument hostname
-  vxi11_dmm.clear ();               // Reset the instrument
-  vxi11_dmm.printf ("*idn?");       // Send ID query
-  vxi11_dmm.read (s_msg, 1000);     // Read the ID string
+  // "dmm6500" is the instrument hostname
+  Vxi11 vxi11_dmm ("dmm6500");
+  vxi11_dmm.clear ();                          // Reset the instrument
+  vxi11_dmm.query ("*idn?", s_msg, 1000);      // Send ID query
   printf ("ID string = %s\n", s_msg);
-  vxi11_dmm.local ();               // Return instrument to front-panel control
+  vxi11_dmm.printf (":sens:func \"volt:dc\""); // Select DC volts  
+  double d_volts;
+  vxi11_dmm.query (":read?", &d_volts);        // Do voltage measurement
+  printf ("Volts = %f\n", d_volts);
+  vxi11_dmm.local ();                          // Return to front-panel control
 
   // Example for a GPIB instrument connected to an LAN / GPIB gateway
   // "e5810a" below is the hostname of the gateway.  An IP address can also be
   // used.
   // "gpib0,25" indicates to talk to GPIB address 25
   Vxi11 vxi11_ps ("e5810a", "gpib0,25");
-  vxi11_ps.clear ();                // Reset the instrument
-  vxi11_ps.printf ("*idn?");        // Send the ID query
-  vxi11_ps.read (s_msg, 1000);
+  vxi11_ps.clear ();                           // Reset the instrument
+  vxi11_ps.query ("*idn?", s_msg, 1000);       // Send the ID query
   printf ("ID string = %s\n", s_msg);
-  vxi11_ps.local ();                // Return instrument to front-panel control
+  vxi11_ps.printf ("iset %f; vset %f", 0.25, 5.5); // Set current & voltage
+  vxi11_ps.local ();                           // Return to front-panel control
 
   return (0);
 }
