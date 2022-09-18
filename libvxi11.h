@@ -10,6 +10,9 @@
 //
 // Edit history:
 //
+// 09-17-22 - Added support for SRQ (service request) interrupt callback with
+//              enable_srq() and srq_callback().
+//            Added device_addr() to get back string used to open the device.
 // 08-22-22 - Added read_terminator() functions to set and get the terminator
 //              used when reading data from the device.  Default is END (EOI
 //              for GPIB).
@@ -20,17 +23,25 @@
 // ***************************************************************************
 
 // ***************************************************************************
-// Example use of Vxi11 class
+// Example of basic use of Vxi11 class
 // 
 //   Vxi11 vxi11 ("dmm6500");      // Open connection to device
 //   vxi11.printf ("*idn?");       // Send ID query
 //   char s_msg[1000];
 //   vxi11.read (s_msg, 1000);     // Read query response
 //   printf ("ID = %s\n", s_msg);  // Print response to screen
+//
+// See the function header comments in vxi11.cpp for complete documentation
+// of the use of each function.
 // ***************************************************************************
 
 class Vxi11 {
+  
+  // *************************************************************************
+  // Private members
+  // *************************************************************************
  private:
+
   int _b_valid;                         // 1 = has connection to device
 
   double _d_timeout;                    // Timeout time, in seconds
@@ -44,11 +55,29 @@ class Vxi11 {
   void *__p_link;                       // VXI-11 link, type Create_LinkResp*
                                         // Use macro _p_link for access
 
-  enum {CNT_ERR_DESC_MAX=24};           // Description of RPC call error codes
+  char _s_device_addr[256];             // Device address & name used in the
+                                        // constructor or open()
+
+  bool _b_srq_ena;                      // True if SRQ interrupt is enabled
+  bool _b_srq_udp;                      // True if SRQ uses UDP, else TCP
+  char _a_srq_handle[40];               // Unique handle for SRQ interrupt
+                                        // thread access to the devices
+  static void *_p_pthread_svc_run;      // Thread pointer for _fn_svc_run()
+  static void *_fn_svc_run(void *p_arg);// Func to run svc_run() for SRQ intr
+  static void *_p_svcXprt_srq_tcp;      // TCP RPC service transport for SRQ
+  static void *_p_svcXprt_srq_udp;      // UDP RPC service transport for SRQ
+  static void _fn_srq_callback (void *, void *); // Internal callback for SRQ
+  static void (*_pfn_srq_callback)(Vxi11 *); // User callback function for SRQ
+  
+  enum {CNT_ERR_DESC_MAX=32};           // Description of RPC call error codes
   static const char *_as_err_desc[CNT_ERR_DESC_MAX];
   
- public:
+  // *************************************************************************
+  // Public members
+  //
   // NOTE: See function header comments in vxi11.cpp for full documentation
+  // *************************************************************************
+ public:
   
   // Default constructor
   Vxi11 (void);
@@ -79,7 +108,14 @@ class Vxi11 {
   // Some devices use 10 (linefeed) or 0 (null)
   void read_terminator (char c_term) { _c_read_terminator = c_term; }
   char read_terminator (void) { return (_c_read_terminator); }
-  
+
+  // Get device address and name used in contructor or open()
+  // This can be used in the SRQ callback function to identify which Vxi11
+  // object is calling the callback.
+  const char *device_addr (void) {
+    return (_s_device_addr);
+    }
+
   // Write data to device
   // VXI-11 RPC is "device_write"
   int write (const char *ac_data, int cnt_data);
@@ -98,7 +134,7 @@ class Vxi11 {
   int query (const char *s_query, int *pi_val);
   int query (const char *s_query, char *s_val, int len_val_max);
   
-  // Read status byte
+  // Read status byte (serial poll)
   // VXI-11 RPC is "device_readstb"
   int readstb (void);
 
@@ -126,6 +162,15 @@ class Vxi11 {
   // VXI-11 RPC is "device_unlock"
   int unlock (void);
 
+  // Set the callback function for SRQ (service request) interrupt
+  static int srq_callback (void (*pfn_srq_callback)(Vxi11 *));
+  
+  // Enable/disable SRQ (service request) interrupt
+  // VXI-11 RPCs are "device_enable_srq"
+  //                 "create_intr_chan"
+  //                 "destroy_intr_chan"
+  int enable_srq (bool b_ena, bool b_udp = false);
+  
   // Send raw GPIB command codes via GPIB/LAN gateway
   // VXI-11 RPC is "device_docmd" with command 0x20000 "Send command"
   int docmd_send_command (const char *s_data);
