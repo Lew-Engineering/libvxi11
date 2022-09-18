@@ -1418,6 +1418,11 @@ _fn_srq_callback (void /*svc_req*/ *rqstp, void /*SVCXPRT*/ *transp)
   int Vxi11::
 enable_srq (bool b_ena, bool b_udp)
 {
+  // Early return if enable state and protocol are the same as before
+  if ((b_ena && _b_srq_ena && (b_udp == _b_srq_udp)) ||// Re-Enable, same prot
+      (!b_ena && !_b_srq_ena))                         // Re-disable
+    return (0);
+
   // Early return if object did not make connection to instrument
   if (!_b_valid) {
     fprintf (stderr, "Vxi11::enable_srq error: no connection to device.\n");
@@ -1430,11 +1435,6 @@ enable_srq (bool b_ena, bool b_udp)
     return (1);
     }
   
-  // Early return if enable state and protocol are the same as before
-  if ((b_ena && _b_srq_ena && (b_udp == _b_srq_udp)) ||// Re-Enable, same prot
-      (!b_ena && !_b_srq_ena))                         // Re-disable
-    return (0);
-
   int err = 0;                          // No error yet
   
   Vxi11Mutex vxi11Mutex;                // Lock access until function returns
