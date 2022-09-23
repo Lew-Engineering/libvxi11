@@ -10,6 +10,7 @@
 //
 // Edit history:
 //
+// 09-23-22 - Added support for the abort channel, added abort() function.
 // 09-17-22 - Added support for SRQ (service request) interrupt callback with
 //              enable_srq() and srq_callback().
 //            Added device_addr() to get back string used to open the device.
@@ -55,9 +56,14 @@ class Vxi11 {
   void *__p_link;                       // VXI-11 link, type Create_LinkResp*
                                         // Use macro _p_link for access
 
+  void *__p_client_abort;               // RPC client for the abort channel
+                                        // Use macoro _p_client_abort for access
+
   char _s_device_addr[256];             // Device address & name used in the
                                         // constructor or open()
 
+  unsigned int _ui_device_ip_addr;      // IP address of device
+  
   bool _b_srq_ena;                      // True if SRQ interrupt is enabled
   bool _b_srq_udp;                      // True if SRQ uses UDP, else TCP
   char _a_srq_handle[40];               // Unique handle for SRQ interrupt
@@ -66,8 +72,9 @@ class Vxi11 {
   static void *_fn_svc_run(void *p_arg);// Func to run svc_run() for SRQ intr
   static void *_p_svcXprt_srq_tcp;      // TCP RPC service transport for SRQ
   static void *_p_svcXprt_srq_udp;      // UDP RPC service transport for SRQ
-  static void _fn_srq_callback (void *, void *); // Internal callback for SRQ
   static void (*_pfn_srq_callback)(Vxi11 *); // User callback function for SRQ
+  static void _fn_srq_callback (void *, void *); // Internal callback for SRQ
+                                        // VXI-11 RPC is "device_intr_srq"
   
   enum {CNT_ERR_DESC_MAX=32};           // Description of RPC call error codes
   static const char *_as_err_desc[CNT_ERR_DESC_MAX];
@@ -161,6 +168,10 @@ class Vxi11 {
   // Unlock device to release exclusive access
   // VXI-11 RPC is "device_unlock"
   int unlock (void);
+
+  // Abort an in-progress VXI-11 RPC
+  // VXI-11 RPC is "device_abort"
+  int abort (void);
 
   // Set the callback function for SRQ (service request) interrupt
   static int srq_callback (void (*pfn_srq_callback)(Vxi11 *));

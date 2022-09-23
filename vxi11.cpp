@@ -7,6 +7,7 @@
 //
 // Edit history:
 //
+// 09-23-22 - Added support for the abort channel, added abort() function.
 // 09-17-22 - Added support for SRQ (service request) interrupt callback with
 //              enable_srq() and srq_callback().
 //            Support multi-threaded operation by adding mutex around RPC use.
@@ -38,6 +39,8 @@
 #define _p_client ((CLIENT *)__p_client)
 #define _p_link ((Create_LinkResp *)__p_link)
 
+#define _p_client_abort ((CLIENT *)__p_client_abort)
+
 // Static members to support SRQ callback function
 void *Vxi11::_p_pthread_svc_run  = 0;   // Thread pointer for _fn_svc_run()
 void *Vxi11::_p_svcXprt_srq_tcp = 0;    // TCP RPC service transport for SRQ
@@ -47,15 +50,15 @@ void (*Vxi11::_pfn_srq_callback)(Vxi11 *) = 0; // User callback for SRQ intr
 // Error description for each error code from the VXI-11 RPC calls
 const char *Vxi11::_as_err_desc[Vxi11::CNT_ERR_DESC_MAX] =
   {"",                                  // 0 (no error)
-   "",                                  // 1
+   "syntax error",                      // 1
    "",                                  // 2
-   "",                                  // 3
+   "device not accessible",             // 3
    "invalid link identifier",           // 4
    "parameter error",                   // 5
    "channel not established",           // 6
    "",                                  // 7
    "operation not supported",           // 8
-   "",                                  // 9
+   "out of resources",                  // 9
    "",                                  // 10
    "device locked by another link",     // 11
    "no lock held by this link",         // 12
@@ -67,7 +70,7 @@ const char *Vxi11::_as_err_desc[Vxi11::CNT_ERR_DESC_MAX] =
    "",                                  // 18
    "",                                  // 19
    "",                                  // 20
-   "",                                  // 21
+   "invalid address",                   // 21
    "",                                  // 22
    "abort",                             // 23
    "",                                  // 24
@@ -128,7 +131,9 @@ Vxi11 (void)
   _b_valid = 0;                         // No connection to device
   __p_client = 0;                       // No RPC client yet
   __p_link = 0;                         // No link to device yet
+  __p_client_abort = 0;                 // No RPC client for abort channel yet
   _s_device_addr[0] = 0;                // No device address/name yet
+  _ui_device_ip_addr = 0;               // No device IP address yet
   _b_srq_ena = false;                   // SRQ interrupt not enabled
   _b_srq_udp = false;                   // SRQ interrupt will use TCP, not UDP
 
@@ -167,6 +172,9 @@ Vxi11 (const char *s_address, const char *s_device, int *p_err)
   _b_valid = 0;                         // No connection to device
   __p_client = 0;                       // No RPC client yet
   __p_link = 0;                         // No link to device yet
+  __p_client_abort = 0;                 // No RPC client for abort channel yet
+  _s_device_addr[0] = 0;                // No device address/name yet
+  _ui_device_ip_addr = 0;               // No device IP address yet
   _b_srq_ena = false;                   // SRQ interrupt not enabled
   _b_srq_udp = false;                   // SRQ interrupt will use TCP, not UDP
 
@@ -238,6 +246,10 @@ open (const char *s_address, const char *s_device)
   strlcat (_s_device_addr, ":", 256);
   strlcat (_s_device_addr, s_device, 256);
 
+  // *************************************************************************
+  // Set up core RPC channel
+  // *************************************************************************
+
   // Create a client of the RPC functions for device at given address
   const char *s_tcp = "tcp";
   __p_client = clnt_create ((char *)s_address, DEVICE_CORE,
@@ -283,14 +295,17 @@ open (const char *s_address, const char *s_device)
   struct timeval timeval_timeout = {120, 0};
   clnt_control (_p_client, CLSET_TIMEOUT, (char *)(&timeval_timeout));
 
-  // Copy a unique identifier for the SQL interrupt, made up of the address
-  // and device strings
-  strlcpy (_a_srq_handle, s_address, 36);
-  if (s_device) {
-    strlcat (_a_srq_handle, ":", 36);
-    strlcat (_a_srq_handle, s_device, 36);
+  // Get IP address of the device
+  // This is used later if the abort channel is used
+  hostent *p_hostent = gethostbyname (s_address);
+  if (!p_hostent) {
+    fprintf (stderr, "Vxi11::open error: could not get device IP address.\n");
+    destroy_link_1 (&(p_link->lid), _p_client);
+    clnt_destroy (_p_client);
+    return (1);
     }
-    
+  _ui_device_ip_addr = *(unsigned int *)(p_hostent->h_addr_list[0]);
+  
   _b_valid = 1;                         // Now have valid connection
   return (0);
 }
@@ -339,10 +354,15 @@ close (void)
   free (_p_link);
   __p_link = 0;
   
+  if (_p_client_abort) {
+    clnt_destroy (_p_client_abort);     // Abort channel
+    __p_client_abort = 0;
+    }
+
   // Close RPC client
-  clnt_destroy (_p_client);
+  clnt_destroy (_p_client);             // Core (normal) channel
   __p_client = 0;
-  
+
   return (err);
 }
 
@@ -1146,6 +1166,69 @@ unlock (void)
 }
 
 // ***************************************************************************
+// Vxi11::abort - Abort an in-progress VXI-11 RPC
+//                VXI-11 RPC is "device_abort"
+//
+// Parameters: None
+//
+// Returns: 0 = no error
+//          1 = error
+//
+// Notes: This is normally called from a separate thread from which the RPC
+//        that is being aborted is called.  The purpose of the abort is to
+//        end an existing RPC before its timeout expires.
+// ***************************************************************************
+  int Vxi11::
+abort (void)
+{
+  // Early return if object did not make connection to instrument
+  if (!_b_valid) {
+    fprintf (stderr, "Vxi11::abort error: no connection to device.\n");
+    return (1);
+    }
+
+  // Create abort channel if it was not already created
+  if (!_p_client_abort) {
+    sockaddr_in sockaddr = {0};
+    sockaddr.sin_family = AF_INET;
+    sockaddr.sin_port = htons (_p_link->abortPort);
+    sockaddr.sin_addr.s_addr = _ui_device_ip_addr;
+    int sock = RPC_ANYSOCK;
+  
+    __p_client_abort = clnttcp_create (&sockaddr, DEVICE_ASYNC,
+                                       DEVICE_ASYNC_VERSION, &sock, 0, 0);
+  
+    if (!_p_client_abort) {               // Exit early if error
+      const char *s_err = "Vxi11 abort error: abort channel client creation";
+      clnt_pcreateerror ((char *)s_err);  // Print error message
+      return (1);
+      }
+    }
+
+  // Send abort command
+  Device_Error *p_error = device_abort_1 (&(_p_link->lid), _p_client_abort);
+
+  if (!p_error) {
+    fprintf (stderr, "Vxi11::abort error: no RPC response.\n");
+    return (1);
+    }
+  
+  // Possible errors
+  //  0 = no error
+  //  4 = invalid link identifier
+  int err_code = int (p_error->error);
+  if (err_code) {
+    int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
+                       err_code : 0;
+    fprintf (stderr, "Vxi11::abort error: %d %s.\n",
+             err_code, _as_err_desc[idx_err_desc]);
+    return (1);
+    }
+
+  return (0);
+}
+
+// ***************************************************************************
 // Vxi11::srq_callback - Specify the callback function for the SRQ (service
 //                       request) interrupt.
 //
@@ -1531,7 +1614,7 @@ enable_srq (bool b_ena, bool b_udp)
     int idx_ip_addr=0;
     unsigned int ip_addr = 0;
     while (p_hostent->h_addr_list[idx_ip_addr]) {
-      ip_addr = ntohl (*(int *)(p_hostent->h_addr_list[idx_ip_addr]));
+      ip_addr = ntohl (*(unsigned int *)(p_hostent->h_addr_list[idx_ip_addr]));
       if (ip_addr != 0x7f000001)        // Skip loopback address 127.0.0.1
         break;
       idx_ip_addr++;
