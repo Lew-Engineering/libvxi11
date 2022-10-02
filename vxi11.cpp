@@ -7,6 +7,8 @@
 //
 // Edit history:
 //
+// 10-02-22 - Added log_err_ena() to control whether error messages are logged
+//              to stderr or not.  Defaults to enable logging.
 // 09-23-22 - Added support for the abort channel, added abort() function.
 // 09-17-22 - Added support for SRQ (service request) interrupt callback with
 //              enable_srq() and srq_callback().
@@ -36,13 +38,12 @@
 // Macro to conveniently access __p_client and __p_link members of the class.
 // They are defined as void * in the class so that the .h file does not need
 // to include the RPC interface.
-#define _p_client ((CLIENT *)__p_client)
-#define _p_link ((Create_LinkResp *)__p_link)
-
+#define _p_client       ((CLIENT *)__p_client)
 #define _p_client_abort ((CLIENT *)__p_client_abort)
+#define _p_link         ((Create_LinkResp *)__p_link)
 
 // Static members to support SRQ callback function
-void *Vxi11::_p_pthread_svc_run  = 0;   // Thread pointer for _fn_svc_run()
+void *Vxi11::_p_pthread_svc_run = 0;    // Thread pointer for _fn_svc_run()
 void *Vxi11::_p_svcXprt_srq_tcp = 0;    // TCP RPC service transport for SRQ
 void *Vxi11::_p_svcXprt_srq_udp = 0;    // UDP RPC service transport for SRQ
 void (*Vxi11::_pfn_srq_callback)(Vxi11 *) = 0; // User callback for SRQ intr
@@ -83,6 +84,8 @@ const char *Vxi11::_as_err_desc[Vxi11::CNT_ERR_DESC_MAX] =
    "",                                  // 31
   };
 
+bool Vxi11::_b_log_err = true;          // Enable error logging to stderr
+
 // ***************************************************************************
 // Vxi11Mutex - Class to serialize access VXI-11 RPCs via pthread mutexes
 //
@@ -103,18 +106,48 @@ class Vxi11Mutex
   Vxi11Mutex () {
     int err = pthread_mutex_lock (&mutex);
     if (err)
-      fprintf (stderr, "Vxi11 error: could not lock mutex, error %d", err);
+      Vxi11::log_err ("Vxi11 error: could not lock mutex, error %d", err);
     }
 
   // Destructor to unlock mutex
   ~Vxi11Mutex () {
     int err = pthread_mutex_unlock (&mutex);
     if (err)
-      fprintf (stderr, "Vxi11 error: could not unlock mutex, error %d", err);
+      Vxi11::log_err ("Vxi11 error: could not unlock mutex, error %d", err);
     }
 };
 
 pthread_mutex_t Vxi11Mutex::mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// ***************************************************************************
+// Vxi11::log_err - Log errors to stderr if enabled 
+//
+// Parameters:
+// 1. s_format - printf style format string to log
+// 2. ...      - Variable number of parameters, depending on s_format
+//
+// Returns: None
+// ***************************************************************************
+  void Vxi11::
+log_err (const char *s_format, ...)
+{
+  if (!_b_log_err)                      // Do nothing if logging is disabled
+    return;
+  
+  if (!s_format)                        // Do nothing if null pointer
+    return;
+
+  const int LEN_MSG_MAX = 65535;        // Max string length to log
+  static char s_msg[LEN_MSG_MAX+1];
+  
+  va_list va;                           // Process input like printf() does
+  va_start (va, s_format);
+  int cnt = vsnprintf (s_msg, LEN_MSG_MAX, s_format, va);
+  va_end (va);
+  s_msg[LEN_MSG_MAX] = 0;               // Make sure it is terminated
+
+  fputs (s_msg, stderr);                // Print error message to stderr
+}
 
 // ***************************************************************************
 // Vxi11 default constructor - Do not connect to device yet
@@ -164,7 +197,7 @@ Vxi11 (void)
 //                                            1 = error
 //
 // Notes: If there was an error in the RPC call, that error message will
-//        be printed to stderr.
+//        be printed to stderr if log_err_ena() is true.
 // ***************************************************************************
   Vxi11::
 Vxi11 (const char *s_address, const char *s_device, int *p_err)
@@ -207,7 +240,8 @@ Vxi11 (const char *s_address, const char *s_device, int *p_err)
 //                  address in dot notation
 // 2. s_device    - Device name at s_address
 //                  May be set to null pointer if device is directly
-//                  connected to the network.
+//                  connected to the network; in that case "inst0" is used by
+//                  default.
 //                  For GPIB/LAN gateways, this is usually "gpib0,n",
 //                  where 'n' is the GPIB address number.  If connecting
 //                  to the gateway itself, this is usually "gpib0".
@@ -216,7 +250,7 @@ Vxi11 (const char *s_address, const char *s_device, int *p_err)
 //           1 = error
 //
 // Notes: If there was an error in the RPC call, that error message will
-//        be printed to stderr.
+//        be printed to stderr if log_err_ena() is true.
 //
 //        Use this function if the default construtor was used, or if
 //        re-opening the device after closing it.
@@ -226,13 +260,13 @@ open (const char *s_address, const char *s_device)
 {
   // Cannot open a new connection if one is already open in this instance
   if (_b_valid) {
-    fprintf (stderr, "Vxi11::open error: connection already open.\n");
+    log_err ("Vxi11::open error: connection already open.\n");
     return (1);
     }
 
   // Check if host name or IP address is not null
   if (!s_address) {
-    fprintf (stderr, "Vxi11::open error: null address.\n");
+    log_err ("Vxi11::open error: null address.\n");
     return (1);
     }
   
@@ -281,7 +315,7 @@ open (const char *s_address, const char *s_device)
   __p_link = (Create_LinkResp *)malloc (sizeof (Create_LinkResp));
 
   if (!_p_link) {                       // Exit early if error
-    fprintf (stderr, "Vxi11::open error: could not allocate memory.\n");
+    log_err ("Vxi11::open error: could not allocate memory.\n");
     destroy_link_1 (&(p_link->lid), _p_client);
     clnt_destroy (_p_client);
     return (1);
@@ -299,7 +333,7 @@ open (const char *s_address, const char *s_device)
   // This is used later if the abort channel is used
   hostent *p_hostent = gethostbyname (s_address);
   if (!p_hostent) {
-    fprintf (stderr, "Vxi11::open error: could not get device IP address.\n");
+    log_err ("Vxi11::open error: could not get device IP address.\n");
     destroy_link_1 (&(p_link->lid), _p_client);
     clnt_destroy (_p_client);
     return (1);
@@ -333,7 +367,7 @@ close (void)
   // Close link to device
   Device_Error *p_error = destroy_link_1 (&(_p_link->lid), _p_client);  
   if (!p_error) { 
-    fprintf (stderr, "Vxi11::close error: no RPC response.\n");
+    log_err ("Vxi11::close error: no RPC response.\n");
     err = 1;
     }
   
@@ -345,7 +379,7 @@ close (void)
     if (err_code) {
       int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                          err_code : 0;
-      fprintf (stderr, "Vxi11::close error: destroy_link error %d %s.\n",
+      log_err ("Vxi11::close error: destroy_link error %d %s.\n",
                err_code, _as_err_desc[idx_err_desc]);
       err = 1;
       }
@@ -419,13 +453,13 @@ write (const char *ac_data, int cnt_data)
 {
   // Early return if object did not make connection to instrument
   if (!_b_valid) {
-    fprintf (stderr, "Vxi11::write error: no connection to device.\n");
+    log_err ("Vxi11::write error: no connection to device.\n");
     return (1);
     }
 
   // Check input parameters
   if ((!ac_data) || (cnt_data < 0)) {
-    fprintf (stderr, "Vxi11::write error: invalid parameters.\n");
+    log_err ("Vxi11::write error: invalid parameters.\n");
     return (1);
     }
   if (cnt_data == 0)                    // No error for sending no data
@@ -465,7 +499,7 @@ write (const char *ac_data, int cnt_data)
     Device_WriteResp *p_writeResp = device_write_1 (&writeParms, _p_client);
 
     if (p_writeResp == 0) {             // Error if device does not respond
-      fprintf (stderr, "Vxi11::write error: no RPC response.\n");
+      log_err ("Vxi11::write error: no RPC response.\n");
       return (1);
       }
 
@@ -481,7 +515,7 @@ write (const char *ac_data, int cnt_data)
     if (err_code) {
       int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                          err_code : 0;
-      fprintf (stderr, "Vxi11::write error: %d %s.\n",
+      log_err ("Vxi11::write error: %d %s.\n",
                err_code, _as_err_desc[idx_err_desc]);
       return (1);
       }
@@ -511,7 +545,7 @@ write (const char *ac_data, int cnt_data)
 printf (const char *s_format, ...)
 {
   if (!s_format) {                      // Check input parameters
-    fprintf (stderr, "Vxi11::printf error: invalid parameters.\n");
+    log_err ("Vxi11::printf error: invalid parameters.\n");
     return (1);
     }
 
@@ -525,7 +559,7 @@ printf (const char *s_format, ...)
   s_data[CNT_DATA_MAX-1] = 0;           // Make sure it is terminated
   
   if ((cnt < 0) || (cnt>CNT_DATA_MAX)) {// Check for error
-    fprintf (stderr, "Vxi11::printf error: vsnprintf error, count = %d.\n",
+    log_err ("Vxi11::printf error: vsnprintf error, count = %d.\n",
              cnt);
     return (1);
     }
@@ -563,12 +597,12 @@ read (char *ac_data, int cnt_data_max, int *pcnt_read)
 
   // Early return if object did not make connection to instrument
   if (!_b_valid) {
-    fprintf (stderr, "Vxi11::read error: no connection to device.\n");
+    log_err ("Vxi11::read error: no connection to device.\n");
     return (1);
     }
 
   if (!ac_data || (cnt_data_max < 1)) { // Check input parameters
-    fprintf (stderr, "Vxi11::read error: invalid parameters.\n");
+    log_err ("Vxi11::read error: invalid parameters.\n");
     return (1);
     }
 
@@ -602,7 +636,7 @@ read (char *ac_data, int cnt_data_max, int *pcnt_read)
     Device_ReadResp *p_readResp = device_read_1 (&readParms, _p_client);
 
     if (p_readResp == 0) {              // Check for error
-      fprintf (stderr, "Vxi11::read error: no RPC response.\n");
+      log_err ("Vxi11::read error: no RPC response.\n");
       return (1);
       }
 
@@ -613,7 +647,7 @@ read (char *ac_data, int cnt_data_max, int *pcnt_read)
       // This error should never occur; it would only happen if the device
       // sends more bytes than requested.
       if ((*pcnt_read + cnt_read) > cnt_data_max) {
-        fprintf (stderr,"Vxi11::read error: Read more bytes than expected.\n");
+        log_err ("Vxi11::read error: Read more bytes than expected.\n");
         return (1);
         }
 
@@ -636,7 +670,7 @@ read (char *ac_data, int cnt_data_max, int *pcnt_read)
     if (err_code) {
       int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                          err_code : 0;
-      fprintf (stderr, "Vxi11::read error: %d %s.\n",
+      log_err ("Vxi11::read error: %d %s.\n",
                err_code, _as_err_desc[idx_err_desc]);
       return (1);
       }
@@ -648,7 +682,7 @@ read (char *ac_data, int cnt_data_max, int *pcnt_read)
 
     // If user buffer is full, return with error
     else if (*pcnt_read == cnt_data_max) {
-      fprintf (stderr, "Vxi11::read error: read buffer full with %d bytes "
+      log_err ("Vxi11::read error: read buffer full with %d bytes "
                "before reaching END indicator.\n", cnt_data_max);
       return (1);
       }
@@ -776,7 +810,7 @@ readstb (void)
 {
   // Early return if object did not make connection to instrument
   if (!_b_valid) {
-    fprintf (stderr, "Vxi11::readstb error: no connection to device.\n");
+    log_err ("Vxi11::readstb error: no connection to device.\n");
     return (1);
     }
 
@@ -792,7 +826,7 @@ readstb (void)
   Device_ReadStbResp *p_readStbResp=device_readstb_1 (&genericParms,_p_client);
 
   if (!p_readStbResp) {
-    fprintf (stderr, "Vxi11::readstb error: no RPC response.\n");
+    log_err ("Vxi11::readstb error: no RPC response.\n");
     return (-1);
     }
   
@@ -808,7 +842,7 @@ readstb (void)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    fprintf (stderr, "Vxi11::readstb error: %d %s.\n",
+    log_err ("Vxi11::readstb error: %d %s.\n",
              err_code, _as_err_desc[idx_err_desc]);
     return (-1);
     }
@@ -842,7 +876,7 @@ trigger (void)
 {
   // Early return if object did not make connection to instrument
   if (!_b_valid) {
-    fprintf (stderr, "Vxi11::trigger error: no connection to device.\n");
+    log_err ("Vxi11::trigger error: no connection to device.\n");
     return (1);
     }
 
@@ -858,7 +892,7 @@ trigger (void)
   Device_Error *p_error = device_trigger_1 (&genericParms, _p_client);
 
   if (!p_error) {
-    fprintf (stderr, "Vxi11::trigger error: no RPC response.\n");
+    log_err ("Vxi11::trigger error: no RPC response.\n");
     return (1);
     }
   
@@ -874,7 +908,7 @@ trigger (void)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    fprintf (stderr, "Vxi11::trigger error: %d %s.\n",
+    log_err ("Vxi11::trigger error: %d %s.\n",
              err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }
@@ -904,7 +938,7 @@ clear (void)
 {
   // Early return if object did not make connection to instrument
   if (!_b_valid) {
-    fprintf (stderr, "Vxi11::clear error: no connection to device.\n");
+    log_err ("Vxi11::clear error: no connection to device.\n");
     return (1);
     }
 
@@ -920,7 +954,7 @@ clear (void)
   Device_Error *p_error = device_clear_1 (&genericParms, _p_client);
 
   if (!p_error) {
-    fprintf (stderr, "Vxi11::clear error: no RPC response.\n");
+    log_err ("Vxi11::clear error: no RPC response.\n");
     return (1);
     }
   
@@ -936,7 +970,7 @@ clear (void)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    fprintf (stderr, "Vxi11::clear error: %d %s.\n",
+    log_err ("Vxi11::clear error: %d %s.\n",
              err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }
@@ -967,7 +1001,7 @@ remote (void)
 {
   // Early return if object did not make connection to instrument
   if (!_b_valid) {
-    fprintf (stderr, "Vxi11::remote error: no connection to device.\n");
+    log_err ("Vxi11::remote error: no connection to device.\n");
     return (1);
     }
 
@@ -983,7 +1017,7 @@ remote (void)
   Device_Error *p_error = device_remote_1 (&genericParms, _p_client);
 
   if (!p_error) {
-    fprintf (stderr, "Vxi11::remote error: no RPC response.\n");
+    log_err ("Vxi11::remote error: no RPC response.\n");
     return (1);
     }
   
@@ -999,7 +1033,7 @@ remote (void)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    fprintf (stderr, "Vxi11::remote error: %d %s.\n",
+    log_err ("Vxi11::remote error: %d %s.\n",
              err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }
@@ -1031,7 +1065,7 @@ local (void)
 {
   // Early return if object did not make connection to instrument
   if (!_b_valid) {
-    fprintf (stderr, "Vxi11::local error: no connection to device.\n");
+    log_err ("Vxi11::local error: no connection to device.\n");
     return (1);
     }
 
@@ -1047,7 +1081,7 @@ local (void)
   Device_Error *p_error = device_local_1 (&genericParms, _p_client);
 
   if (!p_error) {
-    fprintf (stderr, "Vxi11::local error: no RPC response.\n");
+    log_err ("Vxi11::local error: no RPC response.\n");
     return (1);
     }
   
@@ -1063,7 +1097,7 @@ local (void)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    fprintf (stderr, "Vxi11::local error: %d %s.\n",
+    log_err ("Vxi11::local error: %d %s.\n",
              err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }
@@ -1085,7 +1119,7 @@ lock (void)
 {
   // Early return if object did not make connection to instrument
   if (!_b_valid) {
-    fprintf (stderr, "Vxi11::lock error: no connection to device.\n");
+    log_err ("Vxi11::lock error: no connection to device.\n");
     return (1);
     }
 
@@ -1100,7 +1134,7 @@ lock (void)
   Device_Error *p_error = device_lock_1 (&lockParms, _p_client);
 
   if (!p_error) {
-    fprintf (stderr, "Vxi11::lock error: no RPC response.\n");
+    log_err ("Vxi11::lock error: no RPC response.\n");
     return (1);
     }
   
@@ -1113,7 +1147,7 @@ lock (void)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    fprintf (stderr, "Vxi11::lock error: %d %s.\n",
+    log_err ("Vxi11::lock error: %d %s.\n",
              err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }
@@ -1135,7 +1169,7 @@ unlock (void)
 {
   // Early return if object did not make connection to instrument
   if (!_b_valid) {
-    fprintf (stderr, "Vxi11::unlock error: no connection to device.\n");
+    log_err ("Vxi11::unlock error: no connection to device.\n");
     return (1);
     }
 
@@ -1145,7 +1179,7 @@ unlock (void)
   Device_Error *p_error = device_unlock_1 (&(_p_link->lid), _p_client);
 
   if (!p_error) {
-    fprintf (stderr, "Vxi11::unlock error: no RPC response.\n");
+    log_err ("Vxi11::unlock error: no RPC response.\n");
     return (1);
     }
   
@@ -1157,7 +1191,7 @@ unlock (void)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    fprintf (stderr, "Vxi11::unlock error: %d %s.\n",
+    log_err ("Vxi11::unlock error: %d %s.\n",
              err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }
@@ -1177,13 +1211,17 @@ unlock (void)
 // Notes: This is normally called from a separate thread from which the RPC
 //        that is being aborted is called.  The purpose of the abort is to
 //        end an existing RPC before its timeout expires.
+//
+//        This function does not work on the Agilent E5810A LAN/GPIB gateway
+//        for unknown reasons.  The clnttcp_create() works, but the
+//        device_abort_1() RPC call times out.
 // ***************************************************************************
   int Vxi11::
 abort (void)
 {
   // Early return if object did not make connection to instrument
   if (!_b_valid) {
-    fprintf (stderr, "Vxi11::abort error: no connection to device.\n");
+    log_err ("Vxi11::abort error: no connection to device.\n");
     return (1);
     }
 
@@ -1206,10 +1244,11 @@ abort (void)
     }
 
   // Send abort command
+  // FIXME - times out on Agilent E5810A
   Device_Error *p_error = device_abort_1 (&(_p_link->lid), _p_client_abort);
 
   if (!p_error) {
-    fprintf (stderr, "Vxi11::abort error: no RPC response.\n");
+    log_err ("Vxi11::abort error: no RPC response.\n");
     return (1);
     }
   
@@ -1220,7 +1259,7 @@ abort (void)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    fprintf (stderr, "Vxi11::abort error: %d %s.\n",
+    log_err ("Vxi11::abort error: %d %s.\n",
              err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }
@@ -1269,7 +1308,7 @@ srq_callback (void (*pfn_srq_callback)(Vxi11 *))
     // Stop thread running svc_run()
     if (_p_pthread_svc_run) {
       if (pthread_cancel (*(pthread_t *)_p_pthread_svc_run)) {
-        fprintf (stderr,"Vxi11::srq_callback error: could not kill thread.\n");
+        log_err ("Vxi11::srq_callback error: could not kill thread.\n");
         err = 1;
         }
       _p_pthread_svc_run = 0;
@@ -1306,7 +1345,7 @@ srq_callback (void (*pfn_srq_callback)(Vxi11 *))
   // Create RPC service transport for the SRQ interrupt channel
   _p_svcXprt_srq_tcp = (void *)svctcp_create (RPC_ANYSOCK, 0, 0);
   if (!_p_svcXprt_srq_tcp) {
-    fprintf (stderr, "Vxi11::srq_callback error: could not create RPC service "
+    log_err ("Vxi11::srq_callback error: could not create RPC service "
              "transport for TCP.\n");
     _pfn_srq_callback = NULL;
     return (1);
@@ -1314,7 +1353,7 @@ srq_callback (void (*pfn_srq_callback)(Vxi11 *))
 
   _p_svcXprt_srq_udp = (void *)svcudp_create (RPC_ANYSOCK);
   if (!_p_svcXprt_srq_udp) {
-    fprintf (stderr, "Vxi11::srq_callback error: could not create RPC service "
+    log_err ("Vxi11::srq_callback error: could not create RPC service "
              "transport for UDP.\n");
     svc_destroy ((SVCXPRT *)_p_svcXprt_srq_tcp);
     _pfn_srq_callback = NULL;
@@ -1325,7 +1364,7 @@ srq_callback (void (*pfn_srq_callback)(Vxi11 *))
   if (!svc_register ((SVCXPRT*)_p_svcXprt_srq_tcp,
                      DEVICE_INTR, DEVICE_INTR_VERSION,
                      (void(*)(void))&_fn_srq_callback, IPPROTO_TCP)) {
-    fprintf (stderr, "Vxi11::srq_callback error: could not register SRQ "
+    log_err ("Vxi11::srq_callback error: could not register SRQ "
              "callback function for TCP.\n");
     svc_destroy ((SVCXPRT *)_p_svcXprt_srq_tcp);
     svc_destroy ((SVCXPRT *)_p_svcXprt_srq_udp);
@@ -1336,7 +1375,7 @@ srq_callback (void (*pfn_srq_callback)(Vxi11 *))
   if (!svc_register ((SVCXPRT*)_p_svcXprt_srq_udp,
                      DEVICE_INTR, DEVICE_INTR_VERSION,
                      (void(*)(void))&_fn_srq_callback, IPPROTO_UDP)) {
-    fprintf (stderr, "Vxi11::srq_callback error: could not register SRQ "
+    log_err ("Vxi11::srq_callback error: could not register SRQ "
              "callback function for UDP.\n");
     svc_destroy ((SVCXPRT *)_p_svcXprt_srq_tcp);
     svc_destroy ((SVCXPRT *)_p_svcXprt_srq_udp);
@@ -1349,7 +1388,7 @@ srq_callback (void (*pfn_srq_callback)(Vxi11 *))
   _p_pthread_svc_run =(void *)&pthread_svc_run;
   if (pthread_create ((pthread_t *)_p_pthread_svc_run, NULL, &_fn_svc_run,
                       NULL)) {
-    fprintf (stderr, "Vxi11::srq_callback error: could not start SRQ service "
+    log_err ("Vxi11::srq_callback error: could not start SRQ service "
              "thread.\n");
     svc_unregister (DEVICE_INTR, DEVICE_INTR_VERSION);
     svc_destroy ((SVCXPRT *)_p_svcXprt_srq_tcp);
@@ -1379,8 +1418,7 @@ _fn_svc_run (void *p_arg)
   // Start the RPC server to listen for SRQ interrupts
   svc_run();                            // This function will never return
 
-  fprintf (stderr,
-           "Vxi11::_fn_svc_run error: svc_run() returned unexpectedly.\n");
+  log_err ("Vxi11::_fn_svc_run error: svc_run() returned unexpectedly.\n");
 
   return (0);                           // This should never be called
 }
@@ -1419,7 +1457,7 @@ _fn_srq_callback (void /*svc_req*/ *rqstp, void /*SVCXPRT*/ *transp)
 
   // Check if getting the expected RPC call
   if (((svc_req*)rqstp)->rq_proc != device_intr_srq) {
-    fprintf (stderr, "Vxi11::_fn_srq_callback error: unexpected RPC call.\n");
+    log_err ("Vxi11::_fn_srq_callback error: unexpected RPC call.\n");
     svcerr_noproc ((SVCXPRT *)transp);
     return;
     }
@@ -1432,8 +1470,7 @@ _fn_srq_callback (void /*svc_req*/ *rqstp, void /*SVCXPRT*/ *transp)
   xdrproc_t xdr_argument = (xdrproc_t) xdr_Device_SrqParms;
   (void) memset((char *)&argument, 0, sizeof (argument));
   if (!svc_getargs ((SVCXPRT *)transp, xdr_argument, (caddr_t) &argument)) {
-    fprintf (stderr,
-             "Vxi11::_fn_srq_callback error: could not decode arguments.\n");
+    log_err ("Vxi11::_fn_srq_callback error: could not decode arguments.\n");
     svcerr_decode ((SVCXPRT *)transp);
     return;
     }
@@ -1455,7 +1492,7 @@ _fn_srq_callback (void /*svc_req*/ *rqstp, void /*SVCXPRT*/ *transp)
     _pfn_srq_callback (p_vxi11);
     }
   else {
-    fprintf (stderr, "Vxi11::_fn_srq_callback error:  pointer in SRQ callback "
+    log_err ("Vxi11::_fn_srq_callback error:  pointer in SRQ callback "
              "has incorrect length %d, expected %lu.\n",
              len_ptr, sizeof (Vxi11 *));
     }
@@ -1508,13 +1545,12 @@ enable_srq (bool b_ena, bool b_udp)
 
   // Early return if object did not make connection to instrument
   if (!_b_valid) {
-    fprintf (stderr, "Vxi11::enable_srq error: no connection to device.\n");
+    log_err ("Vxi11::enable_srq error: no connection to device.\n");
     return (1);
     }
 
   if ((_p_svcXprt_srq_tcp == NULL) || (_p_svcXprt_srq_udp == NULL)) {
-    fprintf (stderr,
-             "Vxi11::enable_srq error: must call srq_callback() first.\n");
+    log_err ("Vxi11::enable_srq error: must call srq_callback() first.\n");
     return (1);
     }
   
@@ -1545,7 +1581,7 @@ enable_srq (bool b_ena, bool b_udp)
     Device_Error *p_error = device_enable_srq_1 (&enableSrqParms, _p_client);
     
     if (!p_error) {
-      fprintf (stderr, "Vxi11::enable_srq error: no RPC response.\n");
+      log_err ("Vxi11::enable_srq error: no RPC response.\n");
       err = 1;
       }
     else {
@@ -1556,7 +1592,7 @@ enable_srq (bool b_ena, bool b_udp)
       if (err_code) {
         int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
           err_code : 0;
-        fprintf (stderr, "Vxi11::enable_srq error: %d %s.\n",
+        log_err ("Vxi11::enable_srq error: %d %s.\n",
                  err_code, _as_err_desc[idx_err_desc]);
         err = 1;
         }
@@ -1566,8 +1602,7 @@ enable_srq (bool b_ena, bool b_udp)
     p_error = destroy_intr_chan_1 (0, _p_client);
     
     if (!p_error) {
-      fprintf (stderr,
-               "Vxi11::enable_srq error: could not destroy intr channel.\n");
+      log_err ("Vxi11::enable_srq error: could not destroy intr channel.\n");
       err = 1;
       }
     else {
@@ -1578,7 +1613,7 @@ enable_srq (bool b_ena, bool b_udp)
       if (err_code) {
         int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
           err_code : 0;
-        fprintf (stderr, "Vxi11::enable_srq error:  destroy_intr_chan error "
+        log_err ("Vxi11::enable_srq error:  destroy_intr_chan error "
                  "%d %s.\n", err_code, _as_err_desc[idx_err_desc]);
         err = 1;
         }
@@ -1595,7 +1630,7 @@ enable_srq (bool b_ena, bool b_udp)
     // Get hostname of this computer
     char s_hostname[256];
     if (gethostname (s_hostname, sizeof (s_hostname))) {
-      fprintf (stderr, "Vxi11::enable_srq error: could not get hostname.\n");
+      log_err ("Vxi11::enable_srq error: could not get hostname.\n");
       _pfn_srq_callback = NULL;    
       return (1);
       }
@@ -1604,8 +1639,7 @@ enable_srq (bool b_ena, bool b_udp)
     // Get the IP address for this hostname
     hostent *p_hostent = gethostbyname (s_hostname);
     if (!p_hostent) {
-      fprintf (stderr,
-               "Vxi11::enable_srq error: could not get host IP address.\n");
+      log_err ("Vxi11::enable_srq error: could not get host IP address.\n");
       return (1);
       }
     
@@ -1622,8 +1656,7 @@ enable_srq (bool b_ena, bool b_udp)
 
     // Check if IP address is valid (not 0.0.0.0 or 127.0.0.1)
     if ((ip_addr == 0) || (ip_addr == 0x7f000001)) {
-      fprintf (stderr,
-               "Vxi11::enable_srq error: could not determine IP address.\n");
+      log_err ("Vxi11::enable_srq error: could not determine IP address.\n");
       return (1);
       }
   
@@ -1641,7 +1674,7 @@ enable_srq (bool b_ena, bool b_udp)
     Device_Error *p_error = create_intr_chan_1 (&remoteFunc, _p_client);
 
     if (!p_error) {
-      fprintf (stderr, "Vxi11::enable_srq error:  create_intr_chan no RPC "
+      log_err ("Vxi11::enable_srq error:  create_intr_chan no RPC "
                "response.\n");
       return (1);
       }
@@ -1655,7 +1688,7 @@ enable_srq (bool b_ena, bool b_udp)
     if (err_code) {
       int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
         err_code : 0;
-      fprintf (stderr, "Vxi11::enable_srq_error:  create_intr_chan error "
+      log_err ("Vxi11::enable_srq_error:  create_intr_chan error "
                "%d %s.\n", err_code, _as_err_desc[idx_err_desc]);
       return (1);
       }
@@ -1675,7 +1708,7 @@ enable_srq (bool b_ena, bool b_udp)
     p_error = device_enable_srq_1 (&enableSrqParms, _p_client);
     
     if (!p_error) {
-      fprintf (stderr, "Vxi11::enable_srq error: no RPC response\n");
+      log_err ("Vxi11::enable_srq error: no RPC response\n");
       destroy_intr_chan_1 (0, _p_client);
       return (1);
       }
@@ -1687,7 +1720,7 @@ enable_srq (bool b_ena, bool b_udp)
     if (err_code) {
       int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
         err_code : 0;
-      fprintf (stderr, "Vxi11::enable_srq error: %d %s\n",
+      log_err ("Vxi11::enable_srq error: %d %s\n",
                err_code, _as_err_desc[idx_err_desc]);
       destroy_intr_chan_1 (0, _p_client);
       return (1);
@@ -1735,8 +1768,7 @@ docmd_send_command (const char *s_data)
 {
   // Early return if object did not make connection to instrument
   if (!_b_valid) {
-    fprintf (stderr,
-             "Vxi11::docmd_send_command error: no connection to device.\n");
+    log_err ("Vxi11::docmd_send_command error: no connection to device.\n");
     return (1);
     }
 
@@ -1757,7 +1789,7 @@ docmd_send_command (const char *s_data)
   Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
   
   if (p_docmdResp == 0) {
-    fprintf (stderr, "Vxi11::docmd_send_command error: no RPC response.\n");
+    log_err ("Vxi11::docmd_send_command error: no RPC response.\n");
     return (1);
     }
   
@@ -1774,7 +1806,7 @@ docmd_send_command (const char *s_data)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    fprintf (stderr, "Vxi11::docmd_send_command error: %d %s.\n",
+    log_err ("Vxi11::docmd_send_command error: %d %s.\n",
              err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }
@@ -1825,8 +1857,7 @@ docmd_bus_status (int type)
 {
   // Early return if object did not make connection to instrument
   if (!_b_valid) {
-    fprintf (stderr,
-             "Vxi11::docmd_bus_status error: no connection to device.\n");
+    log_err ("Vxi11::docmd_bus_status error: no connection to device.\n");
     return (-1);
     }
 
@@ -1847,7 +1878,7 @@ docmd_bus_status (int type)
   Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
   
   if (p_docmdResp == 0) {
-    fprintf (stderr, "Vxi11::docmd_bus_status error: no RPC response.\n");
+    log_err ("Vxi11::docmd_bus_status error: no RPC response.\n");
     return (-1);
     }
   
@@ -1864,7 +1895,7 @@ docmd_bus_status (int type)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    fprintf (stderr, "Vxi11::docmd_bus_status error: %d %s.\n",
+    log_err ("Vxi11::docmd_bus_status error: %d %s.\n",
              err_code, _as_err_desc[idx_err_desc]);
     return (-1);
     }
@@ -1896,8 +1927,7 @@ docmd_atn_control (bool b_state)
 {
   // Early return if object did not make connection to instrument
   if (!_b_valid) {
-    fprintf (stderr,
-             "Vxi11::docmd_atn_control error: no connection to device.\n");
+    log_err ("Vxi11::docmd_atn_control error: no connection to device.\n");
     return (1);
     }
 
@@ -1921,7 +1951,7 @@ docmd_atn_control (bool b_state)
   Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
   
   if (p_docmdResp == 0) {
-    fprintf (stderr, "Vxi11::docmd_atn_control error: no RPC response.\n");
+    log_err ("Vxi11::docmd_atn_control error: no RPC response.\n");
     return (1);
     }
   
@@ -1938,7 +1968,7 @@ docmd_atn_control (bool b_state)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    fprintf (stderr, "Vxi11::docmd_atn_control error: %d %s.\n",
+    log_err ("Vxi11::docmd_atn_control error: %d %s.\n",
              err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }
@@ -1970,8 +2000,7 @@ docmd_ren_control (bool b_state)
 {
   // Early return if object did not make connection to instrument
   if (!_b_valid) {
-    fprintf (stderr,
-             "Vxi11::docmd_ren_control error: no connection to device.\n");
+    log_err ("Vxi11::docmd_ren_control error: no connection to device.\n");
     return (1);
     }
 
@@ -1995,7 +2024,7 @@ docmd_ren_control (bool b_state)
   Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
   
   if (p_docmdResp == 0) {
-    fprintf (stderr, "Vxi11::docmd_ren_control error: no RPC response.\n");
+    log_err ("Vxi11::docmd_ren_control error: no RPC response.\n");
     return (1);
     }
   
@@ -2012,7 +2041,7 @@ docmd_ren_control (bool b_state)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    fprintf (stderr, "Vxi11::docmd_ren_control error: %d %s.\n",
+    log_err ("Vxi11::docmd_ren_control error: %d %s.\n",
              err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }
@@ -2026,7 +2055,7 @@ docmd_ren_control (bool b_state)
 //                             VXI-11 RPC is "device_docmd" with cmd 0x20004
 //
 // Parameters:
-// 1. addr - GPIB address of the controller to pass control to
+// 1. addr - GPIB address of the controller to pass control to (0 to 30)
 //
 // Returns: 0 = no error
 //          1 = error
@@ -2045,8 +2074,7 @@ docmd_pass_control (int addr)
 {
   // Early return if object did not make connection to instrument
   if (!_b_valid) {
-    fprintf (stderr,
-             "Vxi11::docmd_pass_control error: no connection to device.\n");
+    log_err ("Vxi11::docmd_pass_control error: no connection to device.\n");
     return (1);
     }
 
@@ -2067,7 +2095,7 @@ docmd_pass_control (int addr)
   Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
   
   if (p_docmdResp == 0) {
-    fprintf (stderr, "Vxi11::docmd_pass_control error: no RPC response.\n");
+    log_err ("Vxi11::docmd_pass_control error: no RPC response.\n");
     return (1);
     }
   
@@ -2084,7 +2112,7 @@ docmd_pass_control (int addr)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    fprintf (stderr, "Vxi11::docmd_pass_control error: %d %s.\n",
+    log_err ("Vxi11::docmd_pass_control error: %d %s.\n",
              err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }
@@ -2098,23 +2126,21 @@ docmd_pass_control (int addr)
 //                            VXI-11 RPC is "device_docmd" with cmd 0x2000a
 //
 // Parameters:
-// 1. addr - GPIB address to set this of the controller to pass control to
-//           (0 to 30)
+// 1. addr - GPIB address to set this controller to (0 to 30)
 //
 // Returns: 0 = no error
 //          1 = error
 //
 // Notes: This command should be used with a Vxi11 object assoicated with the
 //        GPIB interface itself (such as a GPIB/LAN gateway), not a GPIB
-//        instrument.
+//        instrument.  Common addresses for the interface are 0 and 21.
 // ***************************************************************************
   int Vxi11::
 docmd_bus_address (int addr)
 {
   // Early return if object did not make connection to instrument
   if (!_b_valid) {
-    fprintf (stderr,
-             "Vxi11::docmd_bus_address error: no connection to device.\n");
+    log_err ("Vxi11::docmd_bus_address error: no connection to device.\n");
     return (1);
     }
 
@@ -2135,7 +2161,7 @@ docmd_bus_address (int addr)
   Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
   
   if (p_docmdResp == 0) {
-    fprintf (stderr, "Vxi11::docmd_bus_address error: no RPC response.\n");
+    log_err ("Vxi11::docmd_bus_address error: no RPC response.\n");
     return (1);
     }
   
@@ -2152,7 +2178,7 @@ docmd_bus_address (int addr)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    fprintf (stderr, "Vxi11::docmd_bus_address error: %d %s.\n",
+    log_err ("Vxi11::docmd_bus_address error: %d %s.\n",
              err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }
@@ -2182,8 +2208,7 @@ docmd_ifc_control (void)
 {
   // Early return if object did not make connection to instrument
   if (!_b_valid) {
-    fprintf (stderr,
-             "Vxi11::docmd_ifc_control error: no connection to device.\n");
+    log_err ("Vxi11::docmd_ifc_control error: no connection to device.\n");
     return (1);
     }
 
@@ -2204,7 +2229,7 @@ docmd_ifc_control (void)
   Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
   
   if (p_docmdResp == 0) {
-    fprintf (stderr, "Vxi11::docmd_ifc_control error: no RPC response.\n");
+    log_err ("Vxi11::docmd_ifc_control error: no RPC response.\n");
     return (1);
     }
   
@@ -2221,7 +2246,7 @@ docmd_ifc_control (void)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    fprintf (stderr, "Vxi11::docmd_ifc_control error: %d %s.\n",
+    log_err ("Vxi11::docmd_ifc_control error: %d %s.\n",
              err_code, _as_err_desc[idx_err_desc]);
     return (1);
     }

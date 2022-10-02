@@ -10,6 +10,8 @@
 //
 // Edit history:
 //
+// 10-02-22 - Added log_err_ena() to control whether error messages are logged
+//              to stderr or not.  Defaults to enable logging.
 // 09-23-22 - Added support for the abort channel, added abort() function.
 // 09-17-22 - Added support for SRQ (service request) interrupt callback with
 //              enable_srq() and srq_callback().
@@ -63,7 +65,7 @@ class Vxi11 {
                                         // constructor or open()
 
   unsigned int _ui_device_ip_addr;      // IP address of device
-  
+
   bool _b_srq_ena;                      // True if SRQ interrupt is enabled
   bool _b_srq_udp;                      // True if SRQ uses UDP, else TCP
   char _a_srq_handle[40];               // Unique handle for SRQ interrupt
@@ -78,6 +80,8 @@ class Vxi11 {
   
   enum {CNT_ERR_DESC_MAX=32};           // Description of RPC call error codes
   static const char *_as_err_desc[CNT_ERR_DESC_MAX];
+
+  static bool _b_log_err;               // Flag to log errors to stderr
   
   // *************************************************************************
   // Public members
@@ -123,6 +127,14 @@ class Vxi11 {
     return (_s_device_addr);
     }
 
+  // Enable/disable logging of errors to stderr
+  // Default is enabled (true)
+  static void log_err_ena (bool b_log_err) { _b_log_err = b_log_err; }
+  static bool log_err_ena (void) { return (_b_log_err); }    
+
+  // Log error message to std_err if log_err_ena() is true
+  static void log_err (const char *s_format, ...);
+  
   // Write data to device
   // VXI-11 RPC is "device_write"
   int write (const char *ac_data, int cnt_data);
