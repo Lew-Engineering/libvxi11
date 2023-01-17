@@ -1,5 +1,5 @@
 // ***************************************************************************
-// vxi11.cpp - Implentation of the Vxi11 class for libvxi11.so library
+// vxi11.cpp - Implementation of the Vxi11 class for libvxi11.so library
 //             VXI-11 protocol for instrument communication via TCP/IP
 //
 // Written by Eddie Lew, Lew Engineering
@@ -7,6 +7,10 @@
 //
 // Edit history:
 //
+// 01-17-23 - read(): Fix issue where read was terminating on line feed when
+//              user set the read termination character to non-line feed on
+//              E5810A RS-232 port, causing read to end prematurely.
+//            Fixed various typos in comments.
 // 10-02-22 - Added log_err_ena() to control whether error messages are logged
 //              to stderr or not.  Defaults to enable logging.
 // 09-23-22 - Added support for the abort channel, added abort() function.
@@ -14,13 +18,13 @@
 //              enable_srq() and srq_callback().
 //            Support multi-threaded operation by adding mutex around RPC use.
 // 08-22-22 - read(): Use read termination method specified by
-//              read_terminator().  Defualt is END (EOI for GPIB).
+//              read_terminator().  Default is END (EOI for GPIB).
 // 08-21-22 - Added error description to error messages.
 //            Added docmd_*() functions for low level control of
 //              GPIB/LAN gateways.
 // 11-27-21 - read(): Add number of bytes read in error message when END
 //              indicator is not found.
-// 06-10-20 - First releaesd version.
+// 06-10-20 - First released version.
 // 05-18-20 - Started file.
 // ***************************************************************************
 
@@ -193,8 +197,8 @@ Vxi11 (void)
 //                  usually "gpib0".
 //
 // 3. p_err       - Returns error code if given non-zero pointer
-//                  Stores to pointer locaion 0 = no error
-//                                            1 = error
+//                  Stores to pointer location 0 = no error
+//                                             1 = error
 //
 // Notes: If there was an error in the RPC call, that error message will
 //        be printed to stderr if log_err_ena() is true.
@@ -252,7 +256,7 @@ Vxi11 (const char *s_address, const char *s_device, int *p_err)
 // Notes: If there was an error in the RPC call, that error message will
 //        be printed to stderr if log_err_ena() is true.
 //
-//        Use this function if the default construtor was used, or if
+//        Use this function if the default constructor was used, or if
 //        re-opening the device after closing it.
 // ***************************************************************************
   int Vxi11::
@@ -614,11 +618,15 @@ read (char *ac_data, int cnt_data_max, int *pcnt_read)
   readParms.io_timeout = _timeout_ms;	// Timeout for I/O in ms
   readParms.lock_timeout = _timeout_ms;	// Timeout for lock in ms
 
-  if (_c_read_terminator == -1) {       // No term character, use END (EOI)
+  // Use END signal to terminate the read
+  // EOI line on GPIB, line feed (ASCII 10) data character on RS-232
+  if (_c_read_terminator == -1) {
     readParms.flags = 0;                // No special flags
     readParms.termChar = 0;             // Termination character not used,
                                         // since flags = 0
     }
+
+  // Use data character to terminate the read
   else {
     readParms.flags = 128;              // Use termination character
     readParms.termChar = _c_read_terminator;
@@ -675,9 +683,17 @@ read (char *ac_data, int cnt_data_max, int *pcnt_read)
       return (1);
       }
 
-    // If "END" indicator or termination characer is read, then done reading
-    // from device
-    if (p_readResp->reason & 6)         // bit 2 = END (EOI), bit 1 = term char
+    // If "END" indicator or termination character is read, then done reading
+    // from device.
+    //
+    // reason bit 2 = END (EOI on GPIB, line feed on RS-232 on E5810A)
+    //        bit 1 = specified termination character found
+    //
+    // Test each bit separately because the E5810A when using the RS-232 port
+    // will turn on bit 2 whenever the line feed character is read, even if a
+    // different termination character is specified.
+    if (((_c_read_terminator == -1) && (p_readResp->reason & 4)) ||
+        ((_c_read_terminator != -1) && (p_readResp->reason & 2)))
       break;
 
     // If user buffer is full, return with error
@@ -925,7 +941,7 @@ trigger (void)
 // Returns: 0 = no error
 //          1 = error
 //
-// Notes: If Vxi11 object is associted with a GPIB device (a GPIB instrument
+// Notes: If Vxi11 object is associated with a GPIB device (a GPIB instrument
 //        connected to a GPIB/LAN gateway) the GPIB command is SDC (selective
 //        device clear, ATN code 4), and resets only that device
 //
@@ -990,7 +1006,7 @@ clear (void)
 //
 // Notes: If Vxi11 object is associated with a GPIB device (a GPIB instrument
 //        connected to a GPIB/LAN gateway), the SET RWLS control sequence is
-//        excuted for the addressed device with GPIB command LLO (local
+//        executed for the addressed device with GPIB command LLO (local
 //        lockout, ATN code 17)
 //
 //        If Vxi11 object is associated with a GPIB interface (the GPIB/LAN
@@ -1052,13 +1068,13 @@ remote (void)
 //
 // Notes: If Vxi11 object is associated with a GPIB device (a GPIB instrument
 //        connected to a GPIB/LAN gateway), the SET RWLS control sequence is
-//        excuted for the addressed device, with GPIB command GTL (go to local,
-//        ATN code 1).
+//        executed for the addressed device, with GPIB command GTL (go to
+//        local, ATN code 1).
 //
 //        If Vxi11 object is associated with a GPIB interface (the GPIB/LAN
-//        gateway itself), this functon may return an error if the operation
+//        gateway itself), this function may return an error if the operation
 //        is not supported, or it may deactivate the REN line, depending on
-//        the GPIB/LAN interface capabillity.
+//        the GPIB/LAN interface capability.
 // ***************************************************************************
   int Vxi11::
 local (void)
@@ -1425,7 +1441,7 @@ _fn_svc_run (void *p_arg)
 
 // ***************************************************************************
 // Vxi11::_fn_srq_callback - Private static callback function for the SRQ
-//                           interrupt, which then calls the user speicified
+//                           interrupt, which then calls the user speciified
 //                           SRQ callback function.
 //                           VXI-11 RPC is "device_intr_srq"
 //
@@ -1519,7 +1535,7 @@ _fn_srq_callback (void /*svc_req*/ *rqstp, void /*SVCXPRT*/ *transp)
 //          1 = error
 //
 // Notes: To use SRQ interrupts, follow this process:
-//        1. Specify the SRQ callback function wtih Vxi11::srq_callback()
+//        1. Specify the SRQ callback function with Vxi11::srq_callback()
 //        2. Enable SRQ at the VXI-11 level with this function,
 //           Vxi11::enable_srq()
 //        3. Configure your device to create SRQ under the required conditions.
@@ -1755,7 +1771,7 @@ enable_srq (bool b_ena, bool b_udp)
 // Returns: 0 = no error
 //          1 = error
 //
-// Notes: This command should be used with a Vxi11 object assoicated with the
+// Notes: This command should be used with a Vxi11 object associated with the
 //        GPIB interface itself (such as a GPIB/LAN gateway), not a GPIB
 //        instrument.
 //
@@ -1848,7 +1864,7 @@ docmd_send_command (const char *s_data)
 // Returns: -1 = error
 //          otherwise, see above based on type
 //
-// Notes: This command should be used with a Vxi11 object assoicated with the
+// Notes: This command should be used with a Vxi11 object associated with the
 //        GPIB interface itself (such as a GPIB/LAN gateway), not a GPIB
 //        instrument.
 // ***************************************************************************
@@ -1918,7 +1934,7 @@ docmd_bus_status (int type)
 // Returns: 0 = no error
 //          1 = error
 //
-// Notes: This command should be used with a Vxi11 object assoicated with the
+// Notes: This command should be used with a Vxi11 object associated with the
 //        GPIB interface itself (such as a GPIB/LAN gateway), not a GPIB
 //        instrument.
 // ***************************************************************************
@@ -1988,7 +2004,7 @@ docmd_atn_control (bool b_state)
 // Returns: 0 = no error
 //          1 = error
 //
-// Notes: This command should be used with a Vxi11 object assoicated with the
+// Notes: This command should be used with a Vxi11 object associated with the
 //        GPIB interface itself (such as a GPIB/LAN gateway), not a GPIB
 //        instrument.
 //
@@ -2060,7 +2076,7 @@ docmd_ren_control (bool b_state)
 // Returns: 0 = no error
 //          1 = error
 //
-// Notes: This command should be used with a Vxi11 object assoicated with the
+// Notes: This command should be used with a Vxi11 object associated with the
 //        GPIB interface itself (such as a GPIB/LAN gateway), not a GPIB
 //        instrument.
 //
@@ -2131,7 +2147,7 @@ docmd_pass_control (int addr)
 // Returns: 0 = no error
 //          1 = error
 //
-// Notes: This command should be used with a Vxi11 object assoicated with the
+// Notes: This command should be used with a Vxi11 object associated with the
 //        GPIB interface itself (such as a GPIB/LAN gateway), not a GPIB
 //        instrument.  Common addresses for the interface are 0 and 21.
 // ***************************************************************************
@@ -2195,7 +2211,7 @@ docmd_bus_address (int addr)
 // Returns: 0 = no error
 //          1 = error
 //
-// Notes: This command should be used with a Vxi11 object assoicated with the
+// Notes: This command should be used with a Vxi11 object associated with the
 //        GPIB interface itself (such as a GPIB/LAN gateway), not a GPIB
 //        instrument.
 //

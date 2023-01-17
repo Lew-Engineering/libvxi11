@@ -10,6 +10,9 @@
 //
 // Edit history:
 //
+// 01-17-23 - Updated comments to read_terminator() to indicate that on the
+//              E5810A RS-232 port the default read termination is the line
+//              feed character in the received data.
 // 10-02-22 - Added log_err_ena() to control whether error messages are logged
 //              to stderr or not.  Defaults to enable logging.
 // 09-23-22 - Added support for the abort channel, added abort() function.
@@ -51,7 +54,8 @@ class Vxi11 {
   int _timeout_ms;                      // Timeout time, in milliseconds
 
   char _c_read_terminator;              // Read termination character
-                                        // -1 = END (use EOI for GPIB))
+                                        // -1 = END (use EOI for GPIB,
+                                        //      line feed for RS-232 on E5810A)
   
   void *__p_client;                     // RPC client, type CLIENT*
                                         // Use macro _p_client for access
@@ -59,7 +63,7 @@ class Vxi11 {
                                         // Use macro _p_link for access
 
   void *__p_client_abort;               // RPC client for the abort channel
-                                        // Use macoro _p_client_abort for access
+                                        // Use macro _p_client_abort for access
 
   char _s_device_addr[256];             // Device address & name used in the
                                         // constructor or open()
@@ -115,8 +119,10 @@ class Vxi11 {
   double timeout (void);
 
   // Set/get the read termination method
-  // -1 = END (EOI line for GPIB); this is the default
-  // Some devices use 10 (linefeed) or 0 (null)
+  // -1    = END (EOI line for GPIB, line feed for RS-232 on E5810A)
+  //         This is the default
+  // 0-127 = ASCII character for termination
+  //         Some devices use 0 (null) or line feed (10) on GPIB
   void read_terminator (char c_term) { _c_read_terminator = c_term; }
   char read_terminator (void) { return (_c_read_terminator); }
 
