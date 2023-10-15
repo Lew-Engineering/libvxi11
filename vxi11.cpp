@@ -7,6 +7,10 @@
 //
 // Edit history:
 //
+// 10-14-23 - Vxi11 constructor, open(): Added comment for RS-232 use.
+//            timeout(), open(): Set RPC timeout to the user specified timeout
+//              time+10s.  Before it was always set to 120 s, which is not
+//              enough for slow devices.
 // 01-17-23 - read(): Fix issue where read was terminating on line feed when
 //              user set the read termination character to non-line feed on
 //              E5810A RS-232 port, causing read to end prematurely.
@@ -173,8 +177,10 @@ Vxi11 (void)
   _ui_device_ip_addr = 0;               // No device IP address yet
   _b_srq_ena = false;                   // SRQ interrupt not enabled
   _b_srq_udp = false;                   // SRQ interrupt will use TCP, not UDP
-
-  timeout (10.0);                       // Default timeout
+  _d_timeout = 10.0;                    // Default timeout in seconds
+  _timeout_ms = 10000;                  // Default timeout in milliseconds
+  read_terminator (-1);                 // Terminate read with END (EOI line
+                                        // for GPIB)
 }
 
 // ***************************************************************************
@@ -187,7 +193,8 @@ Vxi11 (void)
 // 2. s_device    - Device name at s_address
 //
 //                  May be set to null pointer if device is directly
-//                  connected to the network (an Ethernet or Wifi device).
+//                  connected to the network (an Ethernet or Wifi device); in
+//                  that case "inst0" is used by default.
 //
 //                  For GPIB devices connected to a GPIB/LAN gateways, this is
 //                  usually "gpib0,n", where 'n' is the GPIB address number of
@@ -195,6 +202,9 @@ Vxi11 (void)
 //
 //                  For GPIB interfaces (the GPIB/LAN gateway itself), this is
 //                  usually "gpib0".
+//
+//                  For RS-232 devices connected to an Agilent/Keysight
+//                  E5810A/B, this is usually "COM1,488". 
 //
 // 3. p_err       - Returns error code if given non-zero pointer
 //                  Stores to pointer location 0 = no error
@@ -214,8 +224,8 @@ Vxi11 (const char *s_address, const char *s_device, int *p_err)
   _ui_device_ip_addr = 0;               // No device IP address yet
   _b_srq_ena = false;                   // SRQ interrupt not enabled
   _b_srq_udp = false;                   // SRQ interrupt will use TCP, not UDP
-
-  timeout (10.0);                       // Default timeout
+  _d_timeout = 10.0;                    // Default timeout in seconds
+  _timeout_ms = 10000;                  // Default timeout in milliseconds
   read_terminator (-1);                 // Terminate read with END (EOI line
                                         // for GPIB)
 
@@ -243,12 +253,20 @@ Vxi11 (const char *s_address, const char *s_device, int *p_err)
 // 1. s_address   - Device network address, either a host name or IP
 //                  address in dot notation
 // 2. s_device    - Device name at s_address
+//
 //                  May be set to null pointer if device is directly
-//                  connected to the network; in that case "inst0" is used by
-//                  default.
-//                  For GPIB/LAN gateways, this is usually "gpib0,n",
-//                  where 'n' is the GPIB address number.  If connecting
-//                  to the gateway itself, this is usually "gpib0".
+//                  connected to the network (an Ethernet or WiFi device); in
+//                  that case "inst0" is used by default.
+//
+//                  For GPIB devices connected to a GPIB/LAN gateways, this is
+//                  usually "gpib0,n", where 'n' is the GPIB address number of
+//                  the GPIB device.
+//
+//                  For GPIB interfaces (the GPIB/LAN gateway itself), this is
+//                  usually "gpib0".
+//
+//                  For RS-232 devices connected to an Agilent/Keysight
+//                  E5810A/B, this is usually "COM1,488". 
 //
 // Returns:  0 = no error
 //           1 = error
@@ -299,6 +317,10 @@ open (const char *s_address, const char *s_device)
     return (1);
     }
 
+  // Change underlying RPC timeout from 25s that was set in vxi11_rpc_clnt.c
+  // to 10 seconds more than the user specified timeout
+  timeout (_d_timeout);
+
   // Create a link to the device
   Create_LinkParms linkParms;
   linkParms.clientId = (long)_p_client; // RPC client ID
@@ -326,12 +348,6 @@ open (const char *s_address, const char *s_device)
     }
   
   *_p_link = *p_link;
-
-  // Change underlying RPC timeout from 25s that was set in vxi11_rpc_clnt.c
-  // to 120s to deal with slow devices
-  // FIXME - this should follow the timeout() function value
-  struct timeval timeval_timeout = {120, 0};
-  clnt_control (_p_client, CLSET_TIMEOUT, (char *)(&timeval_timeout));
 
   // Get IP address of the device
   // This is used later if the abort channel is used
@@ -422,6 +438,10 @@ timeout (double d_timeout)
   
   _d_timeout = d_timeout;                     // Store timeout in s
   _timeout_ms = int (d_timeout * 1000 + 0.5); // Store timeout in ms
+
+  // Change underlying RPC timeout 10 seconds longer
+  struct timeval timeval_timeout = {int (_d_timeout + 10), 0};
+  clnt_control (_p_client, CLSET_TIMEOUT, (char *)(&timeval_timeout));
 }
 
 // ***************************************************************************
@@ -580,6 +600,9 @@ printf (const char *s_format, ...)
 //
 // Parameters:
 // 1. ac_data      - Store read data here
+//                   The result will be null-terminated if cnt_data_max is 1
+//                   or more greater than the number of bytes read from the
+//                   device.
 // 2. cnt_data_max - Max length allocated in ac_data
 // 3. pcnt_read    - Returns actual number of bytes returned in ac_data
 //                   This does not include the null terminator
