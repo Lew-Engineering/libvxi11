@@ -7,6 +7,9 @@
 //
 // Edit history:
 //
+// 12-19-23 - timeout(): Prevent crash if called before open() or after close()
+//              is called.
+//            Added device address to most error messages.
 // 10-14-23 - Vxi11 constructor, open(): Added comment for RS-232 use.
 //            timeout(), open(): Set RPC timeout to the user specified timeout
 //              time+10s.  Before it was always set to 120 s, which is not
@@ -282,7 +285,8 @@ open (const char *s_address, const char *s_device)
 {
   // Cannot open a new connection if one is already open in this instance
   if (_b_valid) {
-    log_err ("Vxi11::open error: connection already open.\n");
+    log_err ("Vxi11::open error: connection already open to %s.\n",
+             _s_device_addr);
     return (1);
     }
 
@@ -341,7 +345,8 @@ open (const char *s_address, const char *s_device)
   __p_link = (Create_LinkResp *)malloc (sizeof (Create_LinkResp));
 
   if (!_p_link) {                       // Exit early if error
-    log_err ("Vxi11::open error: could not allocate memory.\n");
+    log_err ("Vxi11::open error: could not allocate memory for %s.\n",
+             _s_device_addr);
     destroy_link_1 (&(p_link->lid), _p_client);
     clnt_destroy (_p_client);
     return (1);
@@ -353,7 +358,8 @@ open (const char *s_address, const char *s_device)
   // This is used later if the abort channel is used
   hostent *p_hostent = gethostbyname (s_address);
   if (!p_hostent) {
-    log_err ("Vxi11::open error: could not get device IP address.\n");
+    log_err ("Vxi11::open error: could not get device IP address for %s.\n",
+             _s_device_addr);
     destroy_link_1 (&(p_link->lid), _p_client);
     clnt_destroy (_p_client);
     return (1);
@@ -387,7 +393,7 @@ close (void)
   // Close link to device
   Device_Error *p_error = destroy_link_1 (&(_p_link->lid), _p_client);  
   if (!p_error) { 
-    log_err ("Vxi11::close error: no RPC response.\n");
+    log_err ("Vxi11::close error: no RPC response for %s.\n", _s_device_addr);
     err = 1;
     }
   
@@ -399,8 +405,8 @@ close (void)
     if (err_code) {
       int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                          err_code : 0;
-      log_err ("Vxi11::close error: destroy_link error %d %s.\n",
-               err_code, _as_err_desc[idx_err_desc]);
+      log_err ("Vxi11::close error: destroy_link error %d %s for %s.\n",
+               err_code, _as_err_desc[idx_err_desc], _s_device_addr);
       err = 1;
       }
     }
@@ -440,8 +446,10 @@ timeout (double d_timeout)
   _timeout_ms = int (d_timeout * 1000 + 0.5); // Store timeout in ms
 
   // Change underlying RPC timeout 10 seconds longer
-  struct timeval timeval_timeout = {int (_d_timeout + 10), 0};
-  clnt_control (_p_client, CLSET_TIMEOUT, (char *)(&timeval_timeout));
+  if (_p_client) {
+    struct timeval timeval_timeout = {int (_d_timeout + 10.5), 0};
+    clnt_control (_p_client, CLSET_TIMEOUT, (char *)(&timeval_timeout));
+    }
 }
 
 // ***************************************************************************
@@ -483,7 +491,8 @@ write (const char *ac_data, int cnt_data)
 
   // Check input parameters
   if ((!ac_data) || (cnt_data < 0)) {
-    log_err ("Vxi11::write error: invalid parameters.\n");
+    log_err ("Vxi11::write error: invalid parameters for %s.\n",
+             _s_device_addr);
     return (1);
     }
   if (cnt_data == 0)                    // No error for sending no data
@@ -523,7 +532,7 @@ write (const char *ac_data, int cnt_data)
     Device_WriteResp *p_writeResp = device_write_1 (&writeParms, _p_client);
 
     if (p_writeResp == 0) {             // Error if device does not respond
-      log_err ("Vxi11::write error: no RPC response.\n");
+      log_err ("Vxi11::write error: no RPC response for %s.\n",_s_device_addr);
       return (1);
       }
 
@@ -539,8 +548,8 @@ write (const char *ac_data, int cnt_data)
     if (err_code) {
       int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                          err_code : 0;
-      log_err ("Vxi11::write error: %d %s.\n",
-               err_code, _as_err_desc[idx_err_desc]);
+      log_err ("Vxi11::write error: %d %s for %s.\n",
+               err_code, _as_err_desc[idx_err_desc], _s_device_addr);
       return (1);
       }
     
@@ -569,7 +578,8 @@ write (const char *ac_data, int cnt_data)
 printf (const char *s_format, ...)
 {
   if (!s_format) {                      // Check input parameters
-    log_err ("Vxi11::printf error: invalid parameters.\n");
+    log_err ("Vxi11::printf error: invalid parameters for %s.\n",
+             _s_device_addr);
     return (1);
     }
 
@@ -583,8 +593,8 @@ printf (const char *s_format, ...)
   s_data[CNT_DATA_MAX-1] = 0;           // Make sure it is terminated
   
   if ((cnt < 0) || (cnt>CNT_DATA_MAX)) {// Check for error
-    log_err ("Vxi11::printf error: vsnprintf error, count = %d.\n",
-             cnt);
+    log_err ("Vxi11::printf error: vsnprintf error, count = %d for %s.\n",
+             cnt, _s_device_addr);
     return (1);
     }
   
@@ -629,7 +639,8 @@ read (char *ac_data, int cnt_data_max, int *pcnt_read)
     }
 
   if (!ac_data || (cnt_data_max < 1)) { // Check input parameters
-    log_err ("Vxi11::read error: invalid parameters.\n");
+    log_err ("Vxi11::read error: invalid parameters for %s.\n",
+             _s_device_addr);
     return (1);
     }
 
@@ -667,7 +678,7 @@ read (char *ac_data, int cnt_data_max, int *pcnt_read)
     Device_ReadResp *p_readResp = device_read_1 (&readParms, _p_client);
 
     if (p_readResp == 0) {              // Check for error
-      log_err ("Vxi11::read error: no RPC response.\n");
+      log_err ("Vxi11::read error: no RPC response for %s.\n", _s_device_addr);
       return (1);
       }
 
@@ -678,7 +689,8 @@ read (char *ac_data, int cnt_data_max, int *pcnt_read)
       // This error should never occur; it would only happen if the device
       // sends more bytes than requested.
       if ((*pcnt_read + cnt_read) > cnt_data_max) {
-        log_err ("Vxi11::read error: Read more bytes than expected.\n");
+        log_err ("Vxi11::read error: Read more bytes than expected for %s.\n",
+                 _s_device_addr);
         return (1);
         }
 
@@ -701,8 +713,8 @@ read (char *ac_data, int cnt_data_max, int *pcnt_read)
     if (err_code) {
       int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                          err_code : 0;
-      log_err ("Vxi11::read error: %d %s.\n",
-               err_code, _as_err_desc[idx_err_desc]);
+      log_err ("Vxi11::read error: %d %s for %s.\n",
+               err_code, _as_err_desc[idx_err_desc], _s_device_addr);
       return (1);
       }
 
@@ -722,7 +734,8 @@ read (char *ac_data, int cnt_data_max, int *pcnt_read)
     // If user buffer is full, return with error
     else if (*pcnt_read == cnt_data_max) {
       log_err ("Vxi11::read error: read buffer full with %d bytes "
-               "before reaching END indicator.\n", cnt_data_max);
+               "before reaching END indicator for %s.\n",
+               cnt_data_max, _s_device_addr);
       return (1);
       }
     } while (1);
@@ -865,7 +878,7 @@ readstb (void)
   Device_ReadStbResp *p_readStbResp=device_readstb_1 (&genericParms,_p_client);
 
   if (!p_readStbResp) {
-    log_err ("Vxi11::readstb error: no RPC response.\n");
+    log_err ("Vxi11::readstb error: no RPC response for %s.\n",_s_device_addr);
     return (-1);
     }
   
@@ -881,8 +894,8 @@ readstb (void)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    log_err ("Vxi11::readstb error: %d %s.\n",
-             err_code, _as_err_desc[idx_err_desc]);
+    log_err ("Vxi11::readstb error: %d %s for %s.\n",
+             err_code, _as_err_desc[idx_err_desc], _s_device_addr);
     return (-1);
     }
 
@@ -931,7 +944,7 @@ trigger (void)
   Device_Error *p_error = device_trigger_1 (&genericParms, _p_client);
 
   if (!p_error) {
-    log_err ("Vxi11::trigger error: no RPC response.\n");
+    log_err ("Vxi11::trigger error: no RPC response for %s.\n",_s_device_addr);
     return (1);
     }
   
@@ -947,8 +960,8 @@ trigger (void)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    log_err ("Vxi11::trigger error: %d %s.\n",
-             err_code, _as_err_desc[idx_err_desc]);
+    log_err ("Vxi11::trigger error: %d %s for %s.\n",
+             err_code, _as_err_desc[idx_err_desc], _s_device_addr);
     return (1);
     }
 
@@ -993,7 +1006,7 @@ clear (void)
   Device_Error *p_error = device_clear_1 (&genericParms, _p_client);
 
   if (!p_error) {
-    log_err ("Vxi11::clear error: no RPC response.\n");
+    log_err ("Vxi11::clear error: no RPC response for %s.\n", _s_device_addr);
     return (1);
     }
   
@@ -1009,8 +1022,8 @@ clear (void)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    log_err ("Vxi11::clear error: %d %s.\n",
-             err_code, _as_err_desc[idx_err_desc]);
+    log_err ("Vxi11::clear error: %d %s for %s.\n",
+             err_code, _as_err_desc[idx_err_desc], _s_device_addr);
     return (1);
     }
 
@@ -1056,7 +1069,7 @@ remote (void)
   Device_Error *p_error = device_remote_1 (&genericParms, _p_client);
 
   if (!p_error) {
-    log_err ("Vxi11::remote error: no RPC response.\n");
+    log_err ("Vxi11::remote error: no RPC response for %s.\n", _s_device_addr);
     return (1);
     }
   
@@ -1072,8 +1085,8 @@ remote (void)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    log_err ("Vxi11::remote error: %d %s.\n",
-             err_code, _as_err_desc[idx_err_desc]);
+    log_err ("Vxi11::remote error: %d %s for %s.\n",
+             err_code, _as_err_desc[idx_err_desc], _s_device_addr);
     return (1);
     }
 
@@ -1120,7 +1133,7 @@ local (void)
   Device_Error *p_error = device_local_1 (&genericParms, _p_client);
 
   if (!p_error) {
-    log_err ("Vxi11::local error: no RPC response.\n");
+    log_err ("Vxi11::local error: no RPC response for %s.\n", _s_device_addr);
     return (1);
     }
   
@@ -1136,8 +1149,8 @@ local (void)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    log_err ("Vxi11::local error: %d %s.\n",
-             err_code, _as_err_desc[idx_err_desc]);
+    log_err ("Vxi11::local error: %d %s for %s.\n",
+             err_code, _as_err_desc[idx_err_desc], _s_device_addr);
     return (1);
     }
 
@@ -1173,7 +1186,7 @@ lock (void)
   Device_Error *p_error = device_lock_1 (&lockParms, _p_client);
 
   if (!p_error) {
-    log_err ("Vxi11::lock error: no RPC response.\n");
+    log_err ("Vxi11::lock error: no RPC response for %s.\n", _s_device_addr);
     return (1);
     }
   
@@ -1186,8 +1199,8 @@ lock (void)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    log_err ("Vxi11::lock error: %d %s.\n",
-             err_code, _as_err_desc[idx_err_desc]);
+    log_err ("Vxi11::lock error: %d %s for %s.\n",
+             err_code, _as_err_desc[idx_err_desc], _s_device_addr);
     return (1);
     }
 
@@ -1218,7 +1231,7 @@ unlock (void)
   Device_Error *p_error = device_unlock_1 (&(_p_link->lid), _p_client);
 
   if (!p_error) {
-    log_err ("Vxi11::unlock error: no RPC response.\n");
+    log_err ("Vxi11::unlock error: no RPC response for %s.\n", _s_device_addr);
     return (1);
     }
   
@@ -1230,8 +1243,8 @@ unlock (void)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    log_err ("Vxi11::unlock error: %d %s.\n",
-             err_code, _as_err_desc[idx_err_desc]);
+    log_err ("Vxi11::unlock error: %d %s for %s.\n",
+             err_code, _as_err_desc[idx_err_desc], _s_device_addr);
     return (1);
     }
 
@@ -1276,7 +1289,7 @@ abort (void)
                                        DEVICE_ASYNC_VERSION, &sock, 0, 0);
   
     if (!_p_client_abort) {               // Exit early if error
-      const char *s_err = "Vxi11 abort error: abort channel client creation";
+      const char *s_err = "Vxi11::abort error: abort channel client creation";
       clnt_pcreateerror ((char *)s_err);  // Print error message
       return (1);
       }
@@ -1287,7 +1300,7 @@ abort (void)
   Device_Error *p_error = device_abort_1 (&(_p_link->lid), _p_client_abort);
 
   if (!p_error) {
-    log_err ("Vxi11::abort error: no RPC response.\n");
+    log_err ("Vxi11::abort error: no RPC response for %s.\n", _s_device_addr);
     return (1);
     }
   
@@ -1298,8 +1311,8 @@ abort (void)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    log_err ("Vxi11::abort error: %d %s.\n",
-             err_code, _as_err_desc[idx_err_desc]);
+    log_err ("Vxi11::abort error: %d %s for %s.\n",
+             err_code, _as_err_desc[idx_err_desc], _s_device_addr);
     return (1);
     }
 
@@ -1589,7 +1602,8 @@ enable_srq (bool b_ena, bool b_udp)
     }
 
   if ((_p_svcXprt_srq_tcp == NULL) || (_p_svcXprt_srq_udp == NULL)) {
-    log_err ("Vxi11::enable_srq error: must call srq_callback() first.\n");
+    log_err ("Vxi11::enable_srq error: must call srq_callback() first "
+             "for %s.\n", _s_device_addr);
     return (1);
     }
   
@@ -1620,7 +1634,8 @@ enable_srq (bool b_ena, bool b_udp)
     Device_Error *p_error = device_enable_srq_1 (&enableSrqParms, _p_client);
     
     if (!p_error) {
-      log_err ("Vxi11::enable_srq error: no RPC response.\n");
+      log_err ("Vxi11::enable_srq error: no RPC response for %s.\n",
+               _s_device_addr);
       err = 1;
       }
     else {
@@ -1631,8 +1646,8 @@ enable_srq (bool b_ena, bool b_udp)
       if (err_code) {
         int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
           err_code : 0;
-        log_err ("Vxi11::enable_srq error: %d %s.\n",
-                 err_code, _as_err_desc[idx_err_desc]);
+        log_err ("Vxi11::enable_srq error: %d %s for %s.\n",
+                 err_code, _as_err_desc[idx_err_desc], _s_device_addr);
         err = 1;
         }
       }
@@ -1641,7 +1656,8 @@ enable_srq (bool b_ena, bool b_udp)
     p_error = destroy_intr_chan_1 (0, _p_client);
     
     if (!p_error) {
-      log_err ("Vxi11::enable_srq error: could not destroy intr channel.\n");
+      log_err ("Vxi11::enable_srq error: could not destroy intr channel "
+               "for %s.\n", _s_device_addr);
       err = 1;
       }
     else {
@@ -1653,7 +1669,8 @@ enable_srq (bool b_ena, bool b_udp)
         int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
           err_code : 0;
         log_err ("Vxi11::enable_srq error:  destroy_intr_chan error "
-                 "%d %s.\n", err_code, _as_err_desc[idx_err_desc]);
+                 "%d %s for %s.\n",
+                 err_code, _as_err_desc[idx_err_desc], _s_device_addr);
         err = 1;
         }
       }
@@ -1669,7 +1686,8 @@ enable_srq (bool b_ena, bool b_udp)
     // Get hostname of this computer
     char s_hostname[256];
     if (gethostname (s_hostname, sizeof (s_hostname))) {
-      log_err ("Vxi11::enable_srq error: could not get hostname.\n");
+      log_err ("Vxi11::enable_srq error: could not get host PC hostname "
+               "for %s.\n", _s_device_addr);
       _pfn_srq_callback = NULL;    
       return (1);
       }
@@ -1678,7 +1696,8 @@ enable_srq (bool b_ena, bool b_udp)
     // Get the IP address for this hostname
     hostent *p_hostent = gethostbyname (s_hostname);
     if (!p_hostent) {
-      log_err ("Vxi11::enable_srq error: could not get host IP address.\n");
+      log_err ("Vxi11::enable_srq error: could not get host IP address "
+               "for %s.\n", _s_device_addr);
       return (1);
       }
     
@@ -1695,7 +1714,8 @@ enable_srq (bool b_ena, bool b_udp)
 
     // Check if IP address is valid (not 0.0.0.0 or 127.0.0.1)
     if ((ip_addr == 0) || (ip_addr == 0x7f000001)) {
-      log_err ("Vxi11::enable_srq error: could not determine IP address.\n");
+      log_err ("Vxi11::enable_srq error: could not determine host IP address "
+               "for %s.\n", _s_device_addr);
       return (1);
       }
   
@@ -1713,8 +1733,8 @@ enable_srq (bool b_ena, bool b_udp)
     Device_Error *p_error = create_intr_chan_1 (&remoteFunc, _p_client);
 
     if (!p_error) {
-      log_err ("Vxi11::enable_srq error:  create_intr_chan no RPC "
-               "response.\n");
+      log_err ("Vxi11::enable_srq error: create_intr_chan no RPC response "
+               "for %s.\n", _s_device_addr);
       return (1);
       }
   
@@ -1727,8 +1747,9 @@ enable_srq (bool b_ena, bool b_udp)
     if (err_code) {
       int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
         err_code : 0;
-      log_err ("Vxi11::enable_srq_error:  create_intr_chan error "
-               "%d %s.\n", err_code, _as_err_desc[idx_err_desc]);
+      log_err ("Vxi11::enable_srq_error: create_intr_chan error %d %s "
+               "for %s.\n", err_code, _as_err_desc[idx_err_desc],
+               _s_device_addr);
       return (1);
       }
 
@@ -1747,7 +1768,8 @@ enable_srq (bool b_ena, bool b_udp)
     p_error = device_enable_srq_1 (&enableSrqParms, _p_client);
     
     if (!p_error) {
-      log_err ("Vxi11::enable_srq error: no RPC response\n");
+      log_err ("Vxi11::enable_srq error: no RPC response for %s.\n",
+               _s_device_addr);
       destroy_intr_chan_1 (0, _p_client);
       return (1);
       }
@@ -1759,8 +1781,8 @@ enable_srq (bool b_ena, bool b_udp)
     if (err_code) {
       int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
         err_code : 0;
-      log_err ("Vxi11::enable_srq error: %d %s\n",
-               err_code, _as_err_desc[idx_err_desc]);
+      log_err ("Vxi11::enable_srq error: %d %s for %s.\n",
+               err_code, _as_err_desc[idx_err_desc], _s_device_addr);
       destroy_intr_chan_1 (0, _p_client);
       return (1);
       }
@@ -1828,7 +1850,8 @@ docmd_send_command (const char *s_data)
   Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
   
   if (p_docmdResp == 0) {
-    log_err ("Vxi11::docmd_send_command error: no RPC response.\n");
+    log_err ("Vxi11::docmd_send_command error: no RPC response for %s.\n",
+             _s_device_addr);
     return (1);
     }
   
@@ -1845,8 +1868,8 @@ docmd_send_command (const char *s_data)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    log_err ("Vxi11::docmd_send_command error: %d %s.\n",
-             err_code, _as_err_desc[idx_err_desc]);
+    log_err ("Vxi11::docmd_send_command error: %d %s for %s.\n",
+             err_code, _as_err_desc[idx_err_desc], _s_device_addr);
     return (1);
     }
 
@@ -1917,7 +1940,8 @@ docmd_bus_status (int type)
   Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
   
   if (p_docmdResp == 0) {
-    log_err ("Vxi11::docmd_bus_status error: no RPC response.\n");
+    log_err ("Vxi11::docmd_bus_status error: no RPC response for %s.\n",
+             _s_device_addr);
     return (-1);
     }
   
@@ -1934,8 +1958,8 @@ docmd_bus_status (int type)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    log_err ("Vxi11::docmd_bus_status error: %d %s.\n",
-             err_code, _as_err_desc[idx_err_desc]);
+    log_err ("Vxi11::docmd_bus_status error: %d %s for %s.\n",
+             err_code, _as_err_desc[idx_err_desc], _s_device_addr);
     return (-1);
     }
 
@@ -1990,7 +2014,8 @@ docmd_atn_control (bool b_state)
   Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
   
   if (p_docmdResp == 0) {
-    log_err ("Vxi11::docmd_atn_control error: no RPC response.\n");
+    log_err ("Vxi11::docmd_atn_control error: no RPC response for %s.\n",
+             _s_device_addr);
     return (1);
     }
   
@@ -2007,8 +2032,8 @@ docmd_atn_control (bool b_state)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    log_err ("Vxi11::docmd_atn_control error: %d %s.\n",
-             err_code, _as_err_desc[idx_err_desc]);
+    log_err ("Vxi11::docmd_atn_control error: %d %s for %s.\n",
+             err_code, _as_err_desc[idx_err_desc], _s_device_addr);
     return (1);
     }
 
@@ -2063,7 +2088,8 @@ docmd_ren_control (bool b_state)
   Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
   
   if (p_docmdResp == 0) {
-    log_err ("Vxi11::docmd_ren_control error: no RPC response.\n");
+    log_err ("Vxi11::docmd_ren_control error: no RPC response for %s.\n",
+             _s_device_addr);
     return (1);
     }
   
@@ -2080,8 +2106,8 @@ docmd_ren_control (bool b_state)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    log_err ("Vxi11::docmd_ren_control error: %d %s.\n",
-             err_code, _as_err_desc[idx_err_desc]);
+    log_err ("Vxi11::docmd_ren_control error: %d %s for %s.\n",
+             err_code, _as_err_desc[idx_err_desc], _s_device_addr);
     return (1);
     }
 
@@ -2134,7 +2160,8 @@ docmd_pass_control (int addr)
   Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
   
   if (p_docmdResp == 0) {
-    log_err ("Vxi11::docmd_pass_control error: no RPC response.\n");
+    log_err ("Vxi11::docmd_pass_control error: no RPC response for %s.\n",
+             _s_device_addr);
     return (1);
     }
   
@@ -2151,8 +2178,8 @@ docmd_pass_control (int addr)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    log_err ("Vxi11::docmd_pass_control error: %d %s.\n",
-             err_code, _as_err_desc[idx_err_desc]);
+    log_err ("Vxi11::docmd_pass_control error: %d %s for %s.\n",
+             err_code, _as_err_desc[idx_err_desc], _s_device_addr);
     return (1);
     }
 
@@ -2200,7 +2227,8 @@ docmd_bus_address (int addr)
   Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
   
   if (p_docmdResp == 0) {
-    log_err ("Vxi11::docmd_bus_address error: no RPC response.\n");
+    log_err ("Vxi11::docmd_bus_address error: no RPC response for %s.\n",
+             _s_device_addr);
     return (1);
     }
   
@@ -2217,8 +2245,8 @@ docmd_bus_address (int addr)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    log_err ("Vxi11::docmd_bus_address error: %d %s.\n",
-             err_code, _as_err_desc[idx_err_desc]);
+    log_err ("Vxi11::docmd_bus_address error: %d %s for %s.\n",
+             err_code, _as_err_desc[idx_err_desc], _s_device_addr);
     return (1);
     }
 
@@ -2268,7 +2296,8 @@ docmd_ifc_control (void)
   Device_DocmdResp *p_docmdResp = device_docmd_1 (&docmdParms, _p_client);
   
   if (p_docmdResp == 0) {
-    log_err ("Vxi11::docmd_ifc_control error: no RPC response.\n");
+    log_err ("Vxi11::docmd_ifc_control error: no RPC response for %s.\n",
+             _s_device_addr);
     return (1);
     }
   
@@ -2285,8 +2314,8 @@ docmd_ifc_control (void)
   if (err_code) {
     int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                        err_code : 0;
-    log_err ("Vxi11::docmd_ifc_control error: %d %s.\n",
-             err_code, _as_err_desc[idx_err_desc]);
+    log_err ("Vxi11::docmd_ifc_control error: %d %s for %s.\n",
+             err_code, _as_err_desc[idx_err_desc], _s_device_addr);
     return (1);
     }
 
