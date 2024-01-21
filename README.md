@@ -1,14 +1,14 @@
 # libvxi11
 
-MacOS C++ library for communicating with devices via the VXI-11 TCP/IP protocol
+MacOS and Linux C++ library for communicating with devices via the VXI-11 TCP/IP protocol
 
-Eddie Lew, Lew Engineering, 6/23/2022
+Eddie Lew, Lew Engineering, 1/21/2024
 
 INTRODUCTION
 ------------
 
-This C++ library for Apple MacOS is used by applications to communicate with
-devices supporting the VXI-11 TCP/IP protocol.
+This C++ library for Apple MacOS and Linux is used by applications to
+communicate with devices supporting the VXI-11 TCP/IP protocol.
 
 This includes various test and measurement equipment that have an Ethernet
 port and labeled as LXI compliant.  This library can also talk to LAN / GPIB
@@ -17,11 +17,12 @@ with a GPIB (also known as HP-IB and IEEE-488) interface to be accessible on a
 local Ethernet network.
 
 In fact, using an E5810A/B with this library is one of the easiest ways of
-talking to GPIB instruments on a Mac.  No drivers are needed; simply link this
-library to your program.  Also, since the E5810A/B is on your network, multiple
-Macs can connect to multiple GPIB devices at the same time.  And unlike USB
-GPIB interfaces, you are not tethered by a USB cable.  You can control your
-GPIB instruments from any Mac anywhere in your lab.
+talking to GPIB instruments on a Mac or a Linux PC, including the
+Raspberry Pi.  No drivers are needed; simply link this library to your program.
+Also, since the E5810A/B is on your network, multiple computers can connect to
+multiple GPIB devices at the same time.  And unlike USB GPIB interfaces, you
+are not tethered by a USB cable.  You can control your GPIB instruments from
+any Mac or Linux computer anywhere in your lab.
 
 The RPC protocol for VXI-11 is taken from the following document authored
 by the VXIbus Consortium, Inc.:
@@ -36,14 +37,24 @@ COMPILING
 ---------
 
 The library can be compiled from the command line on any Apple Macintosh
-computer with the Apple Xcode development tools installed.  Simply place all
-files of this project in a single directory and execute the following command:
+computer with the Apple Xcode development tools installed, or from any Linux
+based PC or Raspberry Pi. Simply place all files of this project in a single
+directory and execute the following command:
 
 > `make all`
 
 This will create libvxi11.so.1, which should be linked to your application.
 The libvxi11.h file is the library's C++ header file.
 
+To install the library to /usr/local/lib and /usr/local/include execute
+this command
+
+> `make install`
+
+Depending on the permissions of /usr/local, you may need to run the following
+instead:
+
+> `sudo make install`
 
 USAGE
 -----
@@ -52,7 +63,6 @@ USAGE
   Vxi11 class.  Refer to the function header comments in vxi11.cpp for a
   detailed description of how to use each member function.
 
- 
   Typical usage is as follows:
 
   1. Instantiate the Vxi11 class.

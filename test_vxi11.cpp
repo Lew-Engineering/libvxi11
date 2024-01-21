@@ -1,10 +1,12 @@
 // ***************************************************************************
-// test.cpp - Test the Vxi11 class
+// test_vxi11.cpp - Test the Vxi11 class
 //
 // Written by Eddie Lew, Lew Engineering
+// Copyright (C) 2020 Eddie Lew
 //
 // Edit history:
 //
+// 01-21-24 - Renamed from test.cpp to test_vxi11.cpp.
 // 05-19-20 - Started file.
 // ***************************************************************************
 

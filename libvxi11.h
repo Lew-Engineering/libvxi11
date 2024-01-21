@@ -10,6 +10,8 @@
 //
 // Edit history:
 //
+// 01-21-24 - Changed _c_read_terminator and read_terminator() function from
+//             char to signed char to work with both MacOS and Linux.
 // 01-17-23 - Updated comments to read_terminator() to indicate that on the
 //              E5810A RS-232 port the default read termination is the line
 //              feed character in the received data.
@@ -53,7 +55,7 @@ class Vxi11 {
   double _d_timeout;                    // Timeout time, in seconds
   int _timeout_ms;                      // Timeout time, in milliseconds
 
-  char _c_read_terminator;              // Read termination character
+  signed char _c_read_terminator;       // Read termination character
                                         // -1 = END (use EOI for GPIB,
                                         //      line feed for RS-232 on E5810A)
   
@@ -123,8 +125,8 @@ class Vxi11 {
   //         This is the default
   // 0-127 = ASCII character for termination
   //         Some devices use 0 (null) or line feed (10) on GPIB
-  void read_terminator (char c_term) { _c_read_terminator = c_term; }
-  char read_terminator (void) { return (_c_read_terminator); }
+  void read_terminator (signed char c_term) { _c_read_terminator = c_term; }
+  signed char read_terminator (void) { return (_c_read_terminator); }
 
   // Get device address and name used in contructor or open()
   // This can be used in the SRQ callback function to identify which Vxi11

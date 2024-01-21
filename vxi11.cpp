@@ -7,6 +7,8 @@
 //
 // Edit history:
 //
+// 01-21-24 - Added support for Linux in addition to MacOS.
+//            read(): Added more information in error messages.
 // 12-19-23 - timeout(): Prevent crash if called before open() or after close()
 //              is called.
 //            Added device address to most error messages.
@@ -45,6 +47,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <rpc/pmap_clnt.h>
+#include <netdb.h>
 
 // Macro to conveniently access __p_client and __p_link members of the class.
 // They are defined as void * in the class so that the .h file does not need
@@ -302,9 +305,11 @@ open (const char *s_address, const char *s_device)
 
   // Store the address and device name so that the user can distinguish
   // the Vxi11 object used.
-  strlcpy (_s_device_addr, s_address, 256);
-  strlcat (_s_device_addr, ":", 256);
-  strlcat (_s_device_addr, s_device, 256);
+
+  _s_device_addr[255] = 0;             // Terminate in case input is too large
+  strncpy (_s_device_addr, s_address, 255);
+  strncat (_s_device_addr, ":", 255);
+  strncat (_s_device_addr, s_device, 255);
 
   // *************************************************************************
   // Set up core RPC channel
@@ -663,7 +668,7 @@ read (char *ac_data, int cnt_data_max, int *pcnt_read)
   // Use data character to terminate the read
   else {
     readParms.flags = 128;              // Use termination character
-    readParms.termChar = _c_read_terminator;
+    readParms.termChar = (char)_c_read_terminator;
     }
   
   Vxi11Mutex vxi11Mutex;                // Lock access until function returns
@@ -713,8 +718,10 @@ read (char *ac_data, int cnt_data_max, int *pcnt_read)
     if (err_code) {
       int idx_err_desc = ((err_code >= 0) && (err_code < CNT_ERR_DESC_MAX)) ?
                          err_code : 0;
-      log_err ("Vxi11::read error: %d %s for %s.\n",
-               err_code, _as_err_desc[idx_err_desc], _s_device_addr);
+      log_err ("Vxi11::read error: %d %s, %d bytes read, "
+               "termination reason = 0x%x for %s.\n",
+               err_code, _as_err_desc[idx_err_desc], cnt_read,
+               p_readResp->reason, _s_device_addr);
       return (1);
       }
 
@@ -734,8 +741,10 @@ read (char *ac_data, int cnt_data_max, int *pcnt_read)
     // If user buffer is full, return with error
     else if (*pcnt_read == cnt_data_max) {
       log_err ("Vxi11::read error: read buffer full with %d bytes "
-               "before reaching END indicator for %s.\n",
-               cnt_data_max, _s_device_addr);
+               "before reaching END indicator, %d last bytes read, "
+               "termination reason 0x%x for %s.\n",
+               cnt_data_max, cnt_read, p_readResp->reason, _s_device_addr);
+      ac_data[cnt_data_max-1] = 0;
       return (1);
       }
     } while (1);
@@ -1415,7 +1424,13 @@ srq_callback (void (*pfn_srq_callback)(Vxi11 *))
   // Register the SRQ interrupt callback function with this service
   if (!svc_register ((SVCXPRT*)_p_svcXprt_srq_tcp,
                      DEVICE_INTR, DEVICE_INTR_VERSION,
-                     (void(*)(void))&_fn_srq_callback, IPPROTO_TCP)) {
+#ifdef __APPLE__
+                     (void(*)(void))&_fn_srq_callback,
+#endif
+#ifdef __linux__
+                     (void(*)(svc_req*, SVCXPRT*))&_fn_srq_callback,
+#endif
+                     IPPROTO_TCP)) {
     log_err ("Vxi11::srq_callback error: could not register SRQ "
              "callback function for TCP.\n");
     svc_destroy ((SVCXPRT *)_p_svcXprt_srq_tcp);
@@ -1426,7 +1441,13 @@ srq_callback (void (*pfn_srq_callback)(Vxi11 *))
 
   if (!svc_register ((SVCXPRT*)_p_svcXprt_srq_udp,
                      DEVICE_INTR, DEVICE_INTR_VERSION,
-                     (void(*)(void))&_fn_srq_callback, IPPROTO_UDP)) {
+#ifdef __APPLE__
+                     (void(*)(void))&_fn_srq_callback,
+#endif
+#ifdef __linux__
+                     (void(*)(svc_req*, SVCXPRT*))&_fn_srq_callback,
+#endif
+                     IPPROTO_UDP)) {
     log_err ("Vxi11::srq_callback error: could not register SRQ "
              "callback function for UDP.\n");
     svc_destroy ((SVCXPRT *)_p_svcXprt_srq_tcp);
@@ -1694,6 +1715,9 @@ enable_srq (bool b_ena, bool b_udp)
     s_hostname[255] = 0;                // Make sure it is null terminated
     
     // Get the IP address for this hostname
+    unsigned int ip_addr = 0;
+
+#ifdef __APPLE__
     hostent *p_hostent = gethostbyname (s_hostname);
     if (!p_hostent) {
       log_err ("Vxi11::enable_srq error: could not get host IP address "
@@ -1704,21 +1728,46 @@ enable_srq (bool b_ena, bool b_udp)
     // There might be multiple addresses, find the first one that is not
     // the loopback address
     int idx_ip_addr=0;
-    unsigned int ip_addr = 0;
     while (p_hostent->h_addr_list[idx_ip_addr]) {
       ip_addr = ntohl (*(unsigned int *)(p_hostent->h_addr_list[idx_ip_addr]));
-      if (ip_addr != 0x7f000001)        // Skip loopback address 127.0.0.1
-        break;
+      if ((ip_addr != 0x7f000001) &&        // Skip loopback address 127.0.0.1
+          (ip_addr != 0x7f000101))          // Skip loopback address 127.0.1.1
+          break;
       idx_ip_addr++;
       }
+#endif
 
-    // Check if IP address is valid (not 0.0.0.0 or 127.0.0.1)
-    if ((ip_addr == 0) || (ip_addr == 0x7f000001)) {
+#ifdef __linux__
+    FILE *p_file = popen ("hostname -I", "r"); // Open pipe to hostname cmd
+    if (p_file) {
+      char s_ip[81];                    // IP address string in the form
+      s_ip[80] = 0;                     // xxx.xxx.xxx.xxx
+      fgets (s_ip, 80, p_file);         // Get IP address from the hostname cmd
+      
+      // Iterate through each octet of the IP address
+      char *s_rest = s_ip;              // For strtok
+      for (int i=0; i < 4; i++) {
+        char *token = strtok_r (s_rest, ".", &s_rest); // Get octet
+        int octet = atoi (token);       // Convert octet string to an integer
+        if (octet < 0 || octet > 255) { // Check octet is within valid range
+          ip_addr = 0;                  // Error will be reported below
+          break;
+          }
+                                        // Combine octet with final result
+        ip_addr = (ip_addr << 8) | (unsigned int)octet;      
+        }
+      
+      pclose (p_file);                  // Close pipe
+      }
+#endif
+    
+    // Check if IP address is valid (not 0.0.0.0 or 127.0.0.1 or 127.0.1.1)
+    if ((ip_addr == 0) || (ip_addr == 0x7f000001) || (ip_addr == 0x7f000101)) {
       log_err ("Vxi11::enable_srq error: could not determine host IP address "
                "for %s.\n", _s_device_addr);
       return (1);
       }
-  
+
     // Configuration to create SRQ interrupt channel
     Device_RemoteFunc remoteFunc;
     remoteFunc.hostAddr = ip_addr;             // IP address of this host
