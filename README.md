@@ -43,7 +43,9 @@ directory and execute the following command:
 
 > `make all`
 
-This will create libvxi11.so.1, which should be linked to your application.
+This will create libvxi11.1.dylib on MacOS and libvxi11.so.1 on Linux,
+which should be linked to your application with the -lvxi11 linker parameter.
+
 The libvxi11.h file is the library's C++ header file.
 
 To install the library to /usr/local/lib and /usr/local/include execute
