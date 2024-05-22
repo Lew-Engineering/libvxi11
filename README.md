@@ -24,6 +24,8 @@ multiple GPIB devices at the same time.  And unlike USB GPIB interfaces, you
 are not tethered by a USB cable.  You can control your GPIB instruments from
 any Mac or Linux computer anywhere in your lab.
 
+![E5810A](https://github.com/Lew-Engineering/libvxi11/assets/108096699/d6cd5757-3d9f-4fea-a807-388ac5031057)
+
 The RPC protocol for VXI-11 is taken from the following document authored
 by the VXIbus Consortium, Inc.:
 
